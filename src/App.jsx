@@ -59,15 +59,39 @@ const initUsuarios = [
   {id:99,tipo:"admin",nombre:"Admin FLETY",pass:"admin123",foto:null},
 ];
 
-function getMVDCoords(addr) {
-  const map={"rivera":{lat:-34.892,lng:-56.172},"agraciada":{lat:-34.898,lng:-56.185},"pocitos":{lat:-34.912,lng:-56.155},"malvín":{lat:-34.897,lng:-56.127},"malvin":{lat:-34.897,lng:-56.127},"centro":{lat:-34.906,lng:-56.190},"prado":{lat:-34.880,lng:-56.195},"buceo":{lat:-34.907,lng:-56.140},"carrasco":{lat:-34.887,lng:-56.072},"ciudad vieja":{lat:-34.907,lng:-56.208},"cordon":{lat:-34.904,lng:-56.179},"cordón":{lat:-34.904,lng:-56.179},"goes":{lat:-34.899,lng:-56.197},"palermo":{lat:-34.901,lng:-56.168},"tres cruces":{lat:-34.900,lng:-56.169}};
-  const low=addr.toLowerCase();
-  for(const k in map){if(low.includes(k))return map[k];}
-  return{lat:-34.9011+(Math.random()-0.5)*0.04,lng:-56.1645+(Math.random()-0.5)*0.06};
+// ─── GEOCODIFICACIÓN REAL (Nominatim / OpenStreetMap — gratis) ────────────
+const geocodeCache = {};
+async function geocodificar(direccion) {
+  const key = direccion.trim().toLowerCase();
+  if (geocodeCache[key]) return geocodeCache[key];
+  try {
+    const query = (direccion.includes("Uruguay")||direccion.includes("Montevideo"))
+      ? direccion : `${direccion}, Montevideo, Uruguay`;
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, { headers: {"Accept-Language":"es"} });
+    const data = await res.json();
+    if (data?.[0]) {
+      const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+      geocodeCache[key] = coords;
+      return coords;
+    }
+  } catch(e) {}
+  return { lat:-34.9011, lng:-56.1645 };
 }
-function calcularDistancia(origen,destino){
-  const c1=getMVDCoords(origen),c2=getMVDCoords(destino);
-  return parseFloat((Math.sqrt(Math.pow((c2.lat-c1.lat)*111,2)+Math.pow((c2.lng-c1.lng)*111*Math.cos(c1.lat*Math.PI/180),2))).toFixed(1));
+
+function distanciaHaversine(c1, c2) {
+  const R = 6371;
+  const dLat = (c2.lat-c1.lat)*Math.PI/180;
+  const dLng = (c2.lng-c1.lng)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(c1.lat*Math.PI/180)*Math.cos(c2.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+  return parseFloat((R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))).toFixed(1));
+}
+
+const COORDS_FALLBACK = { lat:-34.9011, lng:-56.1645 };
+function calcularDistancia(origen, destino) {
+  const c1 = geocodeCache[origen?.trim().toLowerCase()] || COORDS_FALLBACK;
+  const c2 = geocodeCache[destino?.trim().toLowerCase()] || COORDS_FALLBACK;
+  return distanciaHaversine(c1, c2);
 }
 
 const initSolicitudes = [
@@ -147,35 +171,142 @@ function Avatar({u,size=52}){
   );
 }
 
-// ─── MAPA MINI ─────────────────────────────────────────────────────────────
-function MiniMapa({origen,destino}){
-  if(!origen||!destino)return null;
-  const c1=getMVDCoords(origen),c2=getMVDCoords(destino);
-  const minLat=Math.min(c1.lat,c2.lat)-0.01,maxLat=Math.max(c1.lat,c2.lat)+0.01;
-  const minLng=Math.min(c1.lng,c2.lng)-0.015,maxLng=Math.max(c1.lng,c2.lng)+0.015;
-  const W=320,H=148;
-  const toX=lng=>((lng-minLng)/(maxLng-minLng))*(W-40)+20;
-  const toY=lat=>((maxLat-lat)/(maxLat-minLat))*(H-30)+15;
-  const x1=toX(c1.lng),y1=toY(c1.lat),x2=toX(c2.lng),y2=toY(c2.lat);
-  const dist=(Math.sqrt(Math.pow((c2.lat-c1.lat)*111,2)+Math.pow((c2.lng-c1.lng)*111*Math.cos(c1.lat*Math.PI/180),2))).toFixed(1);
-  const streets=[[[20,38],[300,38]],[[20,78],[300,78]],[[20,118],[300,118]],[[60,8],[60,143]],[[140,8],[140,143]],[[220,8],[220,143]]];
-  return(
-    <div style={{background:"#E0F7F7",borderRadius:14,overflow:"hidden",marginBottom:10}}>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}}>
-        <rect width={W} height={H} fill="#D4F2F2"/>
-        {streets.map(([[xa,ya],[xb,yb]],i)=><line key={i} x1={xa} y1={ya} x2={xb} y2={yb} stroke="#B8E8E8" strokeWidth="7"/>)}
-        {streets.map(([[xa,ya],[xb,yb]],i)=><line key={"w"+i} x1={xa} y1={ya} x2={xb} y2={yb} stroke="#D4F2F2" strokeWidth="2"/>)}
-        <defs><linearGradient id="rG" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#00D4D4"/><stop offset="100%" stopColor="#3B4FE0"/></linearGradient></defs>
-        <path d={`M ${x1} ${y1} Q ${(x1+x2)/2} ${(y1+y2)/2-28} ${x2} ${y2}`} fill="none" stroke="url(#rG)" strokeWidth="3.5" strokeDasharray="7,4"/>
-        <circle cx={x1} cy={y1} r="11" fill={C.success}/><text x={x1} y={y1+4} textAnchor="middle" fontSize="12" fill="#fff" fontWeight="bold">A</text>
-        <circle cx={x2} cy={y2} r="11" fill={C.danger}/><text x={x2} y={y2+4} textAnchor="middle" fontSize="12" fill="#fff" fontWeight="bold">B</text>
-        <rect x={(x1+x2)/2-30} y={(y1+y2)/2-15} width="60" height="21" rx="10" fill="rgba(26,35,64,0.7)"/>
-        <text x={(x1+x2)/2} y={(y1+y2)/2-1} textAnchor="middle" fontSize="11" fill="#fff">~{dist} km</text>
-      </svg>
-      <div style={{display:"flex",gap:12,padding:"5px 12px 7px",fontSize:12,color:C.muted}}>
-        <span><span style={{color:C.success,fontWeight:700}}>A </span>{origen.length>24?origen.slice(0,24)+"…":origen}</span>
-        <span><span style={{color:C.danger,fontWeight:700}}>B </span>{destino.length>24?destino.slice(0,24)+"…":destino}</span>
-      </div>
+// ─── MAPA REAL CON LEAFLET + OPENSTREETMAP ────────────────────────────────
+// Inyectar CSS de Leaflet una sola vez
+let leafletCSSInjected = false;
+function injectLeafletCSS() {
+  if (leafletCSSInjected) return;
+  leafletCSSInjected = true;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+  document.head.appendChild(link);
+}
+
+function MiniMapa({ origen, destino }) {
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const [coords, setCoords] = useState(null);
+  const [dist, setDist] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const mapId = useRef(`map-${Math.random().toString(36).slice(2)}`);
+
+  // Geocodificar ambas direcciones cuando cambien
+  useEffect(() => {
+    if (!origen || !destino || origen.length < 5 || destino.length < 5) return;
+    setLoading(true);
+    setError(false);
+    Promise.all([geocodificar(origen), geocodificar(destino)])
+      .then(([c1, c2]) => {
+        setCoords({ c1, c2 });
+        setDist(distanciaHaversine(c1, c2));
+        setLoading(false);
+      })
+      .catch(() => { setError(true); setLoading(false); });
+  }, [origen, destino]);
+
+  // Inicializar/actualizar mapa Leaflet
+  useEffect(() => {
+    if (!coords || !mapRef.current) return;
+    injectLeafletCSS();
+
+    const init = () => {
+      if (!window.L) { setTimeout(init, 200); return; }
+      const L = window.L;
+      const { c1, c2 } = coords;
+
+      // Destruir mapa anterior si existe
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+      }
+
+      const centerLat = (c1.lat + c2.lat) / 2;
+      const centerLng = (c1.lng + c2.lng) / 2;
+
+      const map = L.map(mapRef.current, {
+        center: [centerLat, centerLng],
+        zoom: 13,
+        zoomControl: false,
+        attributionControl: false,
+        dragging: false,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        touchZoom: false,
+      });
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+      }).addTo(map);
+
+      // Marcador A (origen) — verde
+      const iconA = L.divIcon({
+        html: `<div style="background:#00C48C;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">A</div>`,
+        className: "", iconSize: [26, 26], iconAnchor: [13, 13],
+      });
+      // Marcador B (destino) — rojo
+      const iconB = L.divIcon({
+        html: `<div style="background:#FF5C7A;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">B</div>`,
+        className: "", iconSize: [26, 26], iconAnchor: [13, 13],
+      });
+
+      L.marker([c1.lat, c1.lng], { icon: iconA }).addTo(map);
+      L.marker([c2.lat, c2.lng], { icon: iconB }).addTo(map);
+
+      // Línea entre A y B
+      L.polyline([[c1.lat, c1.lng], [c2.lat, c2.lng]], {
+        color: "#3B4FE0", weight: 3, dashArray: "8,5", opacity: 0.85,
+      }).addTo(map);
+
+      // Ajustar zoom para que entren los dos puntos
+      map.fitBounds([[c1.lat, c1.lng], [c2.lat, c2.lng]], { padding: [28, 28] });
+
+      mapInstance.current = map;
+    };
+
+    // Cargar Leaflet JS si no está
+    if (!window.L) {
+      const script = document.createElement("script");
+      script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      script.onload = init;
+      document.head.appendChild(script);
+    } else {
+      init();
+    }
+
+    return () => {
+      if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; }
+    };
+  }, [coords]);
+
+  if (!origen || !destino || origen.length < 5 || destino.length < 5) return null;
+
+  return (
+    <div style={{ borderRadius: 14, overflow: "hidden", marginBottom: 10, border: `1.5px solid ${C.cyan}33` }}>
+      {loading && (
+        <div style={{ height: 150, background: "#E0F7F7", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 20 }}>🗺️</div>
+          <div style={{ fontSize: 12, color: C.muted }}>Buscando ubicaciones reales...</div>
+        </div>
+      )}
+      {error && (
+        <div style={{ height: 80, background: `${C.warning}15`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ fontSize: 12, color: C.warning }}>⚠️ No se pudo cargar el mapa — verificá las direcciones</span>
+        </div>
+      )}
+      {!loading && !error && (
+        <div ref={mapRef} id={mapId.current} style={{ height: 175, width: "100%" }}/>
+      )}
+      {dist !== null && !loading && !error && (
+        <div style={{ display: "flex", gap: 10, padding: "7px 12px 8px", fontSize: 12, color: C.muted, background: "#F0FAFA", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 10 }}>
+            <span><span style={{ color: C.success, fontWeight: 700 }}>A </span>{origen.length > 26 ? origen.slice(0, 26) + "…" : origen}</span>
+            <span><span style={{ color: C.danger, fontWeight: 700 }}>B </span>{destino.length > 26 ? destino.slice(0, 26) + "…" : destino}</span>
+          </div>
+          <span style={{ fontWeight: 700, color: C.blue, whiteSpace: "nowrap" }}>📍 {dist} km</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -414,9 +545,10 @@ export default function FLETY(){
   };
 
   // ── PUBLICAR SOLICITUD ──
-  const publicarSolicitud=()=>{
+  const publicarSolicitud=async()=>{
     if(!nuevaSol.origen||!nuevaSol.destino)return;
-    const dist=calcularDistancia(nuevaSol.origen,nuevaSol.destino);
+    const[c1,c2]=await Promise.all([geocodificar(nuevaSol.origen),geocodificar(nuevaSol.destino)]);
+    const dist=distanciaHaversine(c1,c2);
     const s={id:Date.now(),clienteId:usuarioActual.id,clienteNombre:usuarioActual.nombre,
       clienteTelefono:usuarioActual.telefono,...nuevaSol,fecha:new Date().toISOString().split("T")[0],
       estado:"activa",chats:{},ofertasFletyer:{},fleteroAceptado:null,calificado:false,
