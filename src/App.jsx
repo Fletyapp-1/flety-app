@@ -61,14 +61,18 @@ const initUsuarios = [
 
 // ─── GEOCODIFICACIÓN REAL (Nominatim / OpenStreetMap — gratis) ────────────
 const geocodeCache = {};
+const COORDS_FALLBACK = { lat:-34.9011, lng:-56.1645 };
 async function geocodificar(direccion) {
+  if (!direccion || direccion.trim().length < 3) return COORDS_FALLBACK;
   const key = direccion.trim().toLowerCase();
   if (geocodeCache[key]) return geocodeCache[key];
   try {
-    const query = (direccion.includes("Uruguay")||direccion.includes("Montevideo"))
+    const q = (direccion.includes("Uruguay") || direccion.includes("Montevideo"))
       ? direccion : `${direccion}, Montevideo, Uruguay`;
-    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
-    const res = await fetch(url, { headers: {"Accept-Language":"es"} });
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,
+      { headers: { "Accept-Language": "es" } }
+    );
     const data = await res.json();
     if (data?.[0]) {
       const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
@@ -76,7 +80,7 @@ async function geocodificar(direccion) {
       return coords;
     }
   } catch(e) {}
-  return { lat:-34.9011, lng:-56.1645 };
+  return COORDS_FALLBACK;
 }
 
 function distanciaHaversine(c1, c2) {
@@ -87,7 +91,6 @@ function distanciaHaversine(c1, c2) {
   return parseFloat((R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))).toFixed(1));
 }
 
-const COORDS_FALLBACK = { lat:-34.9011, lng:-56.1645 };
 function calcularDistancia(origen, destino) {
   const c1 = geocodeCache[origen?.trim().toLowerCase()] || COORDS_FALLBACK;
   const c2 = geocodeCache[destino?.trim().toLowerCase()] || COORDS_FALLBACK;
@@ -311,13 +314,37 @@ function MiniMapa({ origen, destino }) {
   );
 }
 
-// ─── INPUT CON AUTOCOMPLETE DE DIRECCIONES (Nominatim) ───────────────────
+// ─── INPUT CON AUTOCOMPLETE DE DIRECCIONES ────────────────────────────────
+// Flujo: usuario escribe calle → elige sugerencia → agrega número de puerta
+// Si escribe todo a mano sin sugerencia → se geocodifica al perder foco
 function InputDireccion({ value, onChange, placeholder, label }) {
+  // Separar valor en calle y número para el estado interno
+  const [calle, setCalle] = useState("");
+  const [numero, setNumero] = useState("");
   const [sugerencias, setSugerencias] = useState([]);
   const [abierto, setAbierto] = useState(false);
   const [cargando, setCargando] = useState(false);
+  const [calleElegida, setCalleElegida] = useState(false); // si ya eligió de la lista
+  const [coordsCalle, setCoordsCalle] = useState(null);
   const timerRef = useRef(null);
   const wrapRef = useRef(null);
+
+  // Sincronizar hacia afuera cuando cambian calle o número
+  useEffect(() => {
+    const dir = numero.trim() ? `${calle} ${numero.trim()}` : calle;
+    onChange(dir);
+    // Si tenemos coords de la calle, cachear también con número
+    if (coordsCalle && calle) {
+      geocodeCache[dir.trim().toLowerCase()] = coordsCalle;
+    }
+  }, [calle, numero]);
+
+  // Inicializar desde value externo (ej: edición)
+  useEffect(() => {
+    if (value && !calle) {
+      setCalle(value);
+    }
+  }, []);
 
   useEffect(() => {
     const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setAbierto(false); };
@@ -325,61 +352,122 @@ function InputDireccion({ value, onChange, placeholder, label }) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const buscar = (texto) => {
-    onChange(texto);
+  const buscarCalle = (texto) => {
+    setCalle(texto);
+    setCalleElegida(false);
+    setCoordsCalle(null);
     clearTimeout(timerRef.current);
     if (texto.length < 4) { setSugerencias([]); setAbierto(false); return; }
     setCargando(true);
     timerRef.current = setTimeout(async () => {
       try {
-        const q = texto.includes("Uruguay") ? texto : `${texto}, Montevideo, Uruguay`;
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&q=${encodeURIComponent(q)}`, { headers: {"Accept-Language":"es"} });
+        const q = `${texto}, Montevideo, Uruguay`;
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&limit=6&addressdetails=1&q=${encodeURIComponent(q)}`,
+          { headers: { "Accept-Language": "es" } }
+        );
         const data = await res.json();
-        setSugerencias(data.map(d => ({
-          label: d.display_name.replace(", Uruguay", "").replace(", Departamento de Montevideo", ""),
-          full: d.display_name,
-          lat: parseFloat(d.lat),
-          lng: parseFloat(d.lon),
-        })));
-        setAbierto(data.length > 0);
-      } catch(e) { setSugerencias([]); }
+        const lista = data.map(d => {
+          // Construir etiqueta limpia: solo calle y barrio si existe
+          const a = d.address || {};
+          const nombre = a.road || a.pedestrian || a.footway || d.display_name.split(",")[0];
+          const barrio = a.suburb || a.neighbourhood || a.city_district || "";
+          return {
+            label: barrio ? `${nombre}, ${barrio}` : nombre,
+            lat: parseFloat(d.lat),
+            lng: parseFloat(d.lon),
+          };
+        }).filter((v, i, arr) => arr.findIndex(x => x.label === v.label) === i); // dedup
+        setSugerencias(lista);
+        setAbierto(lista.length > 0);
+      } catch (e) { setSugerencias([]); }
       setCargando(false);
-    }, 450);
+    }, 400);
   };
 
-  const elegir = (sug) => {
-    onChange(sug.label);
-    // Pre-cachear coords para que calcularDistancia las tenga
+  const elegirCalle = (sug) => {
+    setCalle(sug.label);
+    setCoordsCalle({ lat: sug.lat, lng: sug.lng });
+    setCalleElegida(true);
+    setSugerencias([]);
+    setAbierto(false);
+    // Cachear con y sin número
     geocodeCache[sug.label.trim().toLowerCase()] = { lat: sug.lat, lng: sug.lng };
-    setSugerencias([]); setAbierto(false);
+  };
+
+  // Geocodificar al perder foco si el usuario escribió a mano
+  const geocodificarManual = async () => {
+    setAbierto(false);
+    if (calleElegida || !calle || calle.length < 4) return;
+    try {
+      const dir = numero.trim() ? `${calle} ${numero.trim()}, Montevideo, Uruguay` : `${calle}, Montevideo, Uruguay`;
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(dir)}`,
+        { headers: { "Accept-Language": "es" } }
+      );
+      const data = await res.json();
+      if (data?.[0]) {
+        const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+        setCoordsCalle(coords);
+        const key = (numero.trim() ? `${calle} ${numero.trim()}` : calle).trim().toLowerCase();
+        geocodeCache[key] = coords;
+      }
+    } catch (e) {}
   };
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", marginBottom: 11 }}>
+    <div ref={wrapRef} style={{ marginBottom: 11 }}>
       {label && <label style={st.label}>{label}</label>}
-      <div style={{ position: "relative" }}>
-        <input
-          style={{ ...st.input, marginBottom: 0, paddingRight: cargando ? 36 : 12 }}
-          placeholder={placeholder}
-          value={value}
-          onChange={e => buscar(e.target.value)}
-          onFocus={() => sugerencias.length > 0 && setAbierto(true)}
-          autoComplete="off"
-        />
-        {cargando && <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 14 }}>⏳</div>}
-      </div>
-      {abierto && sugerencias.length > 0 && (
-        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", borderRadius: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.13)", zIndex: 999, border: `1.5px solid ${C.cyan}44`, overflow: "hidden", marginTop: 3 }}>
-          {sugerencias.map((sug, i) => (
-            <div key={i} onMouseDown={() => elegir(sug)}
-              style={{ padding: "10px 14px", fontSize: 13, cursor: "pointer", borderBottom: i < sugerencias.length - 1 ? `1px solid ${C.cyan}22` : "none", background: "#fff", lineHeight: 1.4 }}
-              onMouseEnter={e => e.currentTarget.style.background = `${C.cyan}12`}
-              onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
-              <span style={{ fontSize: 14, marginRight: 6 }}>📍</span>{sug.label}
+      <div style={{ display: "flex", gap: 8 }}>
+        {/* Campo calle con autocomplete */}
+        <div style={{ position: "relative", flex: 1 }}>
+          <input
+            style={{ ...st.input, marginBottom: 0, paddingRight: cargando ? 34 : 12,
+              borderColor: calleElegida ? `${C.success}88` : undefined }}
+            placeholder={placeholder || "Nombre de calle"}
+            value={calle}
+            onChange={e => buscarCalle(e.target.value)}
+            onFocus={() => sugerencias.length > 0 && setAbierto(true)}
+            onBlur={geocodificarManual}
+            autoComplete="off"
+          />
+          {cargando && <span style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", fontSize:13 }}>⏳</span>}
+          {calleElegida && !cargando && <span style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", fontSize:13 }}>✅</span>}
+          {/* Dropdown sugerencias */}
+          {abierto && sugerencias.length > 0 && (
+            <div style={{ position:"absolute", top:"100%", left:0, right:0, background:"#fff", borderRadius:12,
+              boxShadow:"0 6px 24px rgba(0,0,0,0.14)", zIndex:999, border:`1.5px solid ${C.cyan}44`,
+              overflow:"hidden", marginTop:3 }}>
+              {sugerencias.map((sug, i) => (
+                <div key={i} onMouseDown={() => elegirCalle(sug)}
+                  style={{ padding:"9px 13px", fontSize:13, cursor:"pointer", lineHeight:1.4,
+                    borderBottom: i < sugerencias.length-1 ? `1px solid ${C.cyan}18` : "none" }}
+                  onMouseEnter={e => e.currentTarget.style.background = `${C.cyan}15`}
+                  onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
+                  <span style={{ marginRight:6 }}>📍</span>{sug.label}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
-      )}
+        {/* Campo número de puerta */}
+        <input
+          style={{ ...st.input, marginBottom:0, width:72, flexShrink:0, textAlign:"center", fontWeight:700 }}
+          placeholder="Nº"
+          value={numero}
+          onChange={e => setNumero(e.target.value)}
+          onBlur={geocodificarManual}
+          maxLength={6}
+        />
+      </div>
+      {/* Indicador de estado */}
+      <div style={{ fontSize:11, marginTop:4, color: coordsCalle ? C.success : C.muted, minHeight:16 }}>
+        {coordsCalle
+          ? `📍 Ubicación encontrada`
+          : calle.length > 3 && !cargando
+            ? "Elegí una sugerencia o esperá a que se geocodifique"
+            : ""}
+      </div>
     </div>
   );
 }
