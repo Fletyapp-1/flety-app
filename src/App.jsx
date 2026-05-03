@@ -48,11 +48,11 @@ function costoViaje(sol) {
 
 // ─── DATOS INICIALES ──────────────────────────────────────────────────────
 const initUsuarios = [
-  {id:1,tipo:"fletyer",nombre:"Carlos Pérez",edad:38,direccion:"Pocitos, Montevideo",telefono:"099111222",vehiculo:"Camioneta 1 tonelada",vehiculoKey:"camioneta",pass:"1234",foto:null,calificaciones:[],
+  {id:1,tipo:"fletyer",nombre:"Carlos Pérez",edad:38,direccion:"Pocitos, Montevideo",telefono:"099111222",vehiculo:"Camioneta 1 tonelada",vehiculoKey:"camioneta",pass:"1234",foto:null,calificaciones:[],habilitado:false,
     libretaDesde:"",libretaHasta:"",libretaImg:null,
     cedulaFrente:null,cedulaDorso:null},
   {id:2,tipo:"fletyer",nombre:"Diego Martínez",edad:45,direccion:"Malvín, Montevideo",telefono:"099333444",vehiculo:"Camión 3 toneladas",vehiculoKey:"camion",pass:"1234",foto:null,
-    calificaciones:[{estrellas:5,comentario:"Excelente servicio!",cliente:"Laura"},{estrellas:4,comentario:"Muy puntual.",cliente:"Marcos"}],
+    calificaciones:[{estrellas:5,comentario:"Excelente servicio!",cliente:"Laura"},{estrellas:4,comentario:"Muy puntual.",cliente:"Marcos"}],habilitado:true,
     libretaDesde:"",libretaHasta:"",libretaImg:null,
     cedulaFrente:null,cedulaDorso:null},
   {id:3,tipo:"cliente",nombre:"Ana López",edad:29,direccion:"Centro, Montevideo",telefono:"098000111",pass:"1234",foto:null,calificaciones:[]},
@@ -311,7 +311,78 @@ function MiniMapa({ origen, destino }) {
   );
 }
 
-// ─── PRECIO DEL FLETYER visible para CLIENTE ──────────────────────────────
+// ─── INPUT CON AUTOCOMPLETE DE DIRECCIONES (Nominatim) ───────────────────
+function InputDireccion({ value, onChange, placeholder, label }) {
+  const [sugerencias, setSugerencias] = useState([]);
+  const [abierto, setAbierto] = useState(false);
+  const [cargando, setCargando] = useState(false);
+  const timerRef = useRef(null);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setAbierto(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const buscar = (texto) => {
+    onChange(texto);
+    clearTimeout(timerRef.current);
+    if (texto.length < 4) { setSugerencias([]); setAbierto(false); return; }
+    setCargando(true);
+    timerRef.current = setTimeout(async () => {
+      try {
+        const q = texto.includes("Uruguay") ? texto : `${texto}, Montevideo, Uruguay`;
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&q=${encodeURIComponent(q)}`, { headers: {"Accept-Language":"es"} });
+        const data = await res.json();
+        setSugerencias(data.map(d => ({
+          label: d.display_name.replace(", Uruguay", "").replace(", Departamento de Montevideo", ""),
+          full: d.display_name,
+          lat: parseFloat(d.lat),
+          lng: parseFloat(d.lon),
+        })));
+        setAbierto(data.length > 0);
+      } catch(e) { setSugerencias([]); }
+      setCargando(false);
+    }, 450);
+  };
+
+  const elegir = (sug) => {
+    onChange(sug.label);
+    // Pre-cachear coords para que calcularDistancia las tenga
+    geocodeCache[sug.label.trim().toLowerCase()] = { lat: sug.lat, lng: sug.lng };
+    setSugerencias([]); setAbierto(false);
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", marginBottom: 11 }}>
+      {label && <label style={st.label}>{label}</label>}
+      <div style={{ position: "relative" }}>
+        <input
+          style={{ ...st.input, marginBottom: 0, paddingRight: cargando ? 36 : 12 }}
+          placeholder={placeholder}
+          value={value}
+          onChange={e => buscar(e.target.value)}
+          onFocus={() => sugerencias.length > 0 && setAbierto(true)}
+          autoComplete="off"
+        />
+        {cargando && <div style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 14 }}>⏳</div>}
+      </div>
+      {abierto && sugerencias.length > 0 && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", borderRadius: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.13)", zIndex: 999, border: `1.5px solid ${C.cyan}44`, overflow: "hidden", marginTop: 3 }}>
+          {sugerencias.map((sug, i) => (
+            <div key={i} onMouseDown={() => elegir(sug)}
+              style={{ padding: "10px 14px", fontSize: 13, cursor: "pointer", borderBottom: i < sugerencias.length - 1 ? `1px solid ${C.cyan}22` : "none", background: "#fff", lineHeight: 1.4 }}
+              onMouseEnter={e => e.currentTarget.style.background = `${C.cyan}12`}
+              onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
+              <span style={{ fontSize: 14, marginRight: 6 }}>📍</span>{sug.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 function PrecioClienteTag({oferta,tipo}){
   if(!oferta)return null;
   const esMudanza=tipo==="mudanza";
@@ -531,6 +602,10 @@ export default function FLETY(){
   const login=()=>{
     const u=usuarios.find(x=>x.nombre.toLowerCase()===loginForm.nombre.toLowerCase()&&x.pass===loginForm.pass);
     if(!u){setLoginError("Usuario o contraseña incorrectos");return;}
+    if(u.tipo!==tipoUsuario){
+      setLoginError(`Esta cuenta es de tipo "${u.tipo==="cliente"?"Cliente":u.tipo==="fletyer"?"Fletyer":"Admin"}". Volvé al inicio y elegí el botón correcto.`);
+      return;
+    }
     setUsuarioActual(u);setTipoUsuario(u.tipo);setLoginError("");
     setPantalla("app");setTab(u.tipo==="admin"?"admin-sols":"inicio");
   };
@@ -538,10 +613,14 @@ export default function FLETY(){
   // ── REGISTRO ──
   const registrar=()=>{
     const vKey=detectarVehiculoKey(regForm.vehiculo);
-    const docsCampos=tipoUsuario==="fletyer"?{libretaDesde:"",libretaHasta:"",libretaImg:null,cedulaFrente:null,cedulaDorso:null}:{};
+    const docsCampos=tipoUsuario==="fletyer"?{libretaDesde:"",libretaHasta:"",libretaImg:null,cedulaFrente:null,cedulaDorso:null,habilitado:false}:{};
     const nuevo={id:Date.now(),tipo:tipoUsuario,...regForm,...docsCampos,vehiculoKey:vKey,edad:parseInt(regForm.edad),foto:null,calificaciones:[]};
     setUsuarios(p=>[...p,nuevo]);setUsuarioActual(nuevo);
     setPantalla("app");setTab("inicio");
+  };
+
+  const toggleHabilitar=(userId)=>{
+    setUsuarios(p=>p.map(u=>u.id===userId?{...u,habilitado:!u.habilitado}:u));
   };
 
   // ── PUBLICAR SOLICITUD ──
@@ -634,7 +713,9 @@ export default function FLETY(){
   };
 
   // ── MARCAR COMISION PAGADA (admin) ──
-  const marcarComisionPagada=(solId)=>setSolicitudes(p=>p.map(s=>s.id===solId?{...s,comisionPagada:true}:s));
+  const eliminarSolicitud=(solId)=>{
+    setSolicitudes(p=>p.filter(s=>s.id!==solId));
+  };
 
   // ── ENVIAR MENSAJE ──
   const enviarMsg=()=>{
@@ -934,10 +1015,8 @@ export default function FLETY(){
                   </button>
                 ))}
               </div>
-              <label style={st.label}>📍 Partida</label>
-              <input style={st.input} placeholder="Ej: Rivera 1234, Montevideo" value={nuevaSol.origen} onChange={e=>setNuevaSol(p=>({...p,origen:e.target.value}))}/>
-              <label style={st.label}>🏁 Destino</label>
-              <input style={st.input} placeholder="Ej: Agraciada 567, Montevideo" value={nuevaSol.destino} onChange={e=>setNuevaSol(p=>({...p,destino:e.target.value}))}/>
+              <InputDireccion label="📍 Partida" placeholder="Ej: Rivera 1234, Montevideo" value={nuevaSol.origen} onChange={v=>setNuevaSol(p=>({...p,origen:v}))}/>
+              <InputDireccion label="🏁 Destino" placeholder="Ej: Agraciada 567, Montevideo" value={nuevaSol.destino} onChange={v=>setNuevaSol(p=>({...p,destino:v}))}/>
               {mostrarMapa&&<MiniMapa origen={nuevaSol.origen} destino={nuevaSol.destino}/>}
               <label style={st.label}>{nuevaSol.tipo==="mudanza"?"📝 Descripción":"📦 Descripción del envío"}</label>
               <textarea style={st.textarea} placeholder={nuevaSol.tipo==="mudanza"?"Ej: 2 ambientes, heladera...":"Ej: 3 cajas medianas..."} value={nuevaSol.descripcion} onChange={e=>setNuevaSol(p=>({...p,descripcion:e.target.value}))}/>
@@ -1019,9 +1098,16 @@ export default function FLETY(){
               const nC=Object.keys(sol.chats).length;
               return(
                 <div key={sol.id} style={st.card}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8,alignItems:"center"}}>
                     <span style={st.tag(sol.tipo==="flete"?C.blue:C.cyan)}>{sol.tipo==="flete"?"📦 Flete":"🏠 Mudanza"}</span>
-                    <span style={st.tag(e.col)}>{e.label}</span>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={st.tag(e.col)}>{e.label}</span>
+                      {sol.estado==="activa"&&(
+                        <button onClick={()=>eliminarSolicitud(sol.id)}
+                          style={{background:"none",border:`1.5px solid ${C.danger}`,borderRadius:8,width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:C.danger,fontSize:15,flexShrink:0}}
+                          title="Eliminar solicitud">🗑️</button>
+                      )}
+                    </div>
                   </div>
                   <MiniMapa origen={sol.origen} destino={sol.destino}/>
                   <div style={{fontSize:13}}>📍 {sol.origen}</div>
@@ -1069,6 +1155,8 @@ export default function FLETY(){
       const activas=solicitudes.filter(s=>s.estado==="activa");
       const vKey=usuarioActual.vehiculoKey||detectarVehiculoKey(usuarioActual.vehiculo);
       const tarifa=getTarifa(vKey,tarifas);
+      const uActual=usuarios.find(u=>u.id===usuarioActual.id)||usuarioActual;
+      const estaHabilitado=uActual.habilitado===true;
       return(
         <div style={st.wrap}>
           <div style={st.header}>
@@ -1089,85 +1177,96 @@ export default function FLETY(){
                 </div>
               </div>
             </div>
-            <div style={{...st.title,fontSize:16,marginBottom:10}}>Solicitudes disponibles ({activas.length})</div>
-            {activas.length===0&&<div style={{...st.card,textAlign:"center",color:C.muted,fontSize:13}}>No hay solicitudes activas.</div>}
-            {activas.map(sol=>{
-              const dist=sol.distancia||calcularDistancia(sol.origen,sol.destino);
-              const cliente=usuarios.find(u=>u.id===sol.clienteId);
-              const miOferta=sol.ofertasFletyer?.[usuarioActual.id];
-              const hayChat=!!(sol.chats[usuarioActual.id]?.length);
-              // Precio estimado solo para el fletyer
-              const hrEst=Math.max(1,Math.round(dist/15));
-              const estimadoKm=Math.round(dist*tarifa.kmRate);
-              const estimadoHr=tarifa.hrRate;
-              return(
-                <div key={sol.id} style={st.card}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                    <span style={st.tag(sol.tipo==="flete"?C.blue:C.cyan)}>{sol.tipo==="flete"?"📦 Flete":"🏠 Mudanza"}</span>
-                    <span style={st.tag(C.success)}>● Disponible</span>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                    <button onClick={()=>setPerfilVisto(cliente)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Avatar u={cliente} size={30}/></button>
-                    <button onClick={()=>setPerfilVisto(cliente)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}>
-                      <span style={{fontSize:14,fontWeight:700,color:C.blue,textDecoration:"underline dotted"}}>{sol.clienteNombre}</span>
-                    </button>
-                    <span style={{fontSize:11,color:C.muted,marginLeft:"auto"}}>📅 {sol.fecha}</span>
-                  </div>
-                  <MiniMapa origen={sol.origen} destino={sol.destino}/>
-                  <div style={{fontSize:13}}>📍 {sol.origen}</div>
-                  <div style={{fontSize:13}}>🏁 {sol.destino}</div>
-                  {sol.descripcion&&<div style={{fontSize:12,color:C.muted,marginTop:4,fontStyle:"italic"}}>"{sol.descripcion}"</div>}
-                  <div style={{fontSize:12,marginTop:4}}>📞 {sol.clienteTelefono}</div>
-                  {/* Referencia solo para el fletyer */}
-                  <div style={{background:`${C.blue}09`,borderRadius:10,padding:"8px 12px",marginTop:8,marginBottom:8}}>
-                    <div style={{fontSize:11,color:C.blue,fontWeight:700,marginBottom:4}}>📊 Tu referencia ({tarifa.icon} {tarifa.label})</div>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:12}}>
-                      <span style={{color:C.muted}}>{sol.tipo==="mudanza"?"Sugerido/hora:":"Sugerido/flete:"}</span>
-                      <span style={{fontWeight:700,color:C.blue}}>{sol.tipo==="mudanza"?formatUYU(estimadoHr)+"/h":formatUYU(estimadoKm)}</span>
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginTop:2}}>
-                      <span style={{color:C.muted}}>Recibís (−{comisionPct}%):</span>
-                      <span style={{color:C.success,fontWeight:700}}>{sol.tipo==="mudanza"?formatUYU(Math.round(estimadoHr*(1-comisionPct/100)))+"/h":formatUYU(Math.round(estimadoKm*(1-comisionPct/100)))}</span>
-                    </div>
-                  </div>
-                  {/* Campo precio + botón contactar */}
-                  {!miOferta?(
-                    <div style={{background:`${C.warning}10`,border:`1.5px solid ${C.warning}33`,borderRadius:12,padding:"12px 14px",marginBottom:8}}>
-                      <div style={{fontSize:12,fontWeight:700,color:C.warning,marginBottom:8}}>
-                        {sol.tipo==="mudanza"?"⚡ Ingresá tu precio por hora":"⚡ Ingresá tu precio total"}
-                      </div>
-                      <div style={{display:"flex",gap:8}}>
-                        <div style={{position:"relative",flex:1}}>
-                          <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span>
-                          <input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontWeight:700}} placeholder={sol.tipo==="mudanza"?String(estimadoHr):String(estimadoKm)} value={getPrecioInput(sol.id)} onChange={e=>setPrecioInput(sol.id,e.target.value)}/>
-                        </div>
-                        <button style={st.btnSm(GRAD_B)} disabled={!getPrecioInput(sol.id)||parseFloat(getPrecioInput(sol.id))<=0}
-                          onClick={()=>guardarOfertaFletyer(sol.id,getPrecioInput(sol.id))}>Ofertar</button>
-                      </div>
-                      <div style={{fontSize:11,color:C.muted,marginTop:5}}>Al publicar tu precio, se enviará al cliente automáticamente.</div>
-                    </div>
-                  ):(
-                    <div style={{background:`${C.success}12`,border:`1.5px solid ${C.success}33`,borderRadius:12,padding:"10px 14px",marginBottom:8}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                        <span style={{fontSize:12,color:C.muted,fontWeight:700}}>✅ Tu oferta publicada:</span>
-                        <span style={{fontSize:18,fontWeight:900,color:C.success}}>{formatUYU(miOferta.precio)}{sol.tipo==="mudanza"?"/h":""}</span>
-                      </div>
-                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                        <div style={{position:"relative",flex:1}}>
-                          <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span>
-                          <input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontSize:13}} placeholder="Nuevo precio..." value={getPrecioInput(sol.id)} onChange={e=>setPrecioInput(sol.id,e.target.value)}/>
-                        </div>
-                        <button style={st.btnSm(`linear-gradient(135deg,${C.warning},#e0a000)`)} disabled={!getPrecioInput(sol.id)||parseFloat(getPrecioInput(sol.id))<=0}
-                          onClick={()=>modificarOferta(sol.id,getPrecioInput(sol.id))}>Modificar</button>
-                      </div>
-                    </div>
-                  )}
-                  <button style={{...st.btn(hayChat?GRAD:GRAD_B),marginTop:2,marginBottom:0}} onClick={()=>setChatActivo({solicitudId:sol.id,fletyerId:usuarioActual.id})}>
-                    {hayChat?"💬 Ver mi chat":"💬 Abrir chat con cliente"}
-                  </button>
+
+            {/* ── BLOQUEO si no está habilitado ── */}
+            {!estaHabilitado?(
+              <div style={{...st.card,textAlign:"center",padding:"28px 20px",border:`2px solid ${C.warning}55`}}>
+                <div style={{fontSize:36,marginBottom:12}}>🔒</div>
+                <div style={{fontSize:16,fontWeight:800,color:C.warning,marginBottom:8}}>Cuenta pendiente de activación</div>
+                <div style={{fontSize:13,color:C.muted,lineHeight:1.6,marginBottom:16}}>
+                  Para poder ver y ofertar solicitudes, el equipo de FLETY debe verificar tu documentación.<br/><br/>
+                  Asegurate de haber cargado en <strong>"Mi Cuenta"</strong>:<br/>
+                  ✅ Libreta de conducir (vigente)<br/>
+                  ✅ Cédula de identidad (frente y dorso)
                 </div>
-              );
-            })}
+                <button style={st.btn(GRAD_B)} onClick={()=>setTab("cuenta")}>📋 Ir a Mi Cuenta</button>
+              </div>
+            ):(
+              <>
+                <div style={{...st.title,fontSize:16,marginBottom:10}}>Solicitudes disponibles ({activas.length})</div>
+                {activas.length===0&&<div style={{...st.card,textAlign:"center",color:C.muted,fontSize:13}}>No hay solicitudes activas.</div>}
+                {activas.map(sol=>{
+                  const dist=sol.distancia||calcularDistancia(sol.origen,sol.destino);
+                  const cliente=usuarios.find(u=>u.id===sol.clienteId);
+                  const miOferta=sol.ofertasFletyer?.[usuarioActual.id];
+                  const hayChat=!!(sol.chats[usuarioActual.id]?.length);
+                  const hrEst=Math.max(1,Math.round(dist/15));
+                  const estimadoKm=Math.round(dist*tarifa.kmRate);
+                  const estimadoHr=tarifa.hrRate;
+                  return(
+                    <div key={sol.id} style={st.card}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                        <span style={st.tag(sol.tipo==="flete"?C.blue:C.cyan)}>{sol.tipo==="flete"?"📦 Flete":"🏠 Mudanza"}</span>
+                        <span style={st.tag(C.success)}>● Disponible</span>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                        <button onClick={()=>setPerfilVisto(cliente)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Avatar u={cliente} size={30}/></button>
+                        <button onClick={()=>setPerfilVisto(cliente)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}>
+                          <span style={{fontSize:14,fontWeight:700,color:C.blue,textDecoration:"underline dotted"}}>{sol.clienteNombre}</span>
+                        </button>
+                        <span style={{fontSize:11,color:C.muted,marginLeft:"auto"}}>📅 {sol.fecha}</span>
+                      </div>
+                      <MiniMapa origen={sol.origen} destino={sol.destino}/>
+                      <div style={{fontSize:13}}>📍 {sol.origen}</div>
+                      <div style={{fontSize:13}}>🏁 {sol.destino}</div>
+                      {sol.descripcion&&<div style={{fontSize:12,color:C.muted,marginTop:4,fontStyle:"italic"}}>"{sol.descripcion}"</div>}
+                      <div style={{fontSize:12,marginTop:4}}>📞 {sol.clienteTelefono}</div>
+                      <div style={{background:`${C.blue}09`,borderRadius:10,padding:"8px 12px",marginTop:8,marginBottom:8}}>
+                        <div style={{fontSize:11,color:C.blue,fontWeight:700,marginBottom:4}}>📊 Tu referencia ({tarifa.icon} {tarifa.label})</div>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:12}}>
+                          <span style={{color:C.muted}}>{sol.tipo==="mudanza"?"Sugerido/hora:":"Sugerido/flete:"}</span>
+                          <span style={{fontWeight:700,color:C.blue}}>{sol.tipo==="mudanza"?formatUYU(estimadoHr)+"/h":formatUYU(estimadoKm)}</span>
+                        </div>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginTop:2}}>
+                          <span style={{color:C.muted}}>Recibís (−{comisionPct}%):</span>
+                          <span style={{color:C.success,fontWeight:700}}>{sol.tipo==="mudanza"?formatUYU(Math.round(estimadoHr*(1-comisionPct/100)))+"/h":formatUYU(Math.round(estimadoKm*(1-comisionPct/100)))}</span>
+                        </div>
+                      </div>
+                      {!miOferta?(
+                        <div style={{background:`${C.warning}10`,border:`1.5px solid ${C.warning}33`,borderRadius:12,padding:"12px 14px",marginBottom:8}}>
+                          <div style={{fontSize:12,fontWeight:700,color:C.warning,marginBottom:8}}>{sol.tipo==="mudanza"?"⚡ Ingresá tu precio por hora":"⚡ Ingresá tu precio total"}</div>
+                          <div style={{display:"flex",gap:8}}>
+                            <div style={{position:"relative",flex:1}}>
+                              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span>
+                              <input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontWeight:700}} placeholder={sol.tipo==="mudanza"?String(estimadoHr):String(estimadoKm)} value={getPrecioInput(sol.id)} onChange={e=>setPrecioInput(sol.id,e.target.value)}/>
+                            </div>
+                            <button style={st.btnSm(GRAD_B)} disabled={!getPrecioInput(sol.id)||parseFloat(getPrecioInput(sol.id))<=0} onClick={()=>guardarOfertaFletyer(sol.id,getPrecioInput(sol.id))}>Ofertar</button>
+                          </div>
+                          <div style={{fontSize:11,color:C.muted,marginTop:5}}>Al publicar tu precio, se enviará al cliente automáticamente.</div>
+                        </div>
+                      ):(
+                        <div style={{background:`${C.success}12`,border:`1.5px solid ${C.success}33`,borderRadius:12,padding:"10px 14px",marginBottom:8}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                            <span style={{fontSize:12,color:C.muted,fontWeight:700}}>✅ Tu oferta publicada:</span>
+                            <span style={{fontSize:18,fontWeight:900,color:C.success}}>{formatUYU(miOferta.precio)}{sol.tipo==="mudanza"?"/h":""}</span>
+                          </div>
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            <div style={{position:"relative",flex:1}}>
+                              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span>
+                              <input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontSize:13}} placeholder="Nuevo precio..." value={getPrecioInput(sol.id)} onChange={e=>setPrecioInput(sol.id,e.target.value)}/>
+                            </div>
+                            <button style={st.btnSm(`linear-gradient(135deg,${C.warning},#e0a000)`)} disabled={!getPrecioInput(sol.id)||parseFloat(getPrecioInput(sol.id))<=0} onClick={()=>modificarOferta(sol.id,getPrecioInput(sol.id))}>Modificar</button>
+                          </div>
+                        </div>
+                      )}
+                      <button style={{...st.btn(hayChat?GRAD:GRAD_B),marginTop:2,marginBottom:0}} onClick={()=>setChatActivo({solicitudId:sol.id,fletyerId:usuarioActual.id})}>
+                        {hayChat?"💬 Ver mi chat":"💬 Abrir chat con cliente"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </div>
           <TabBar/>
         </div>
@@ -1624,6 +1723,17 @@ export default function FLETY(){
                   {u.tipo==="fletyer"&&(
                     <>
                       <div style={st.divider}/>
+                      {/* ── Toggle Habilitar / Deshabilitar ── */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,background:u.habilitado?`${C.success}12`:`${C.danger}10`,borderRadius:12,padding:"10px 14px",border:`1.5px solid ${u.habilitado?C.success:C.danger}33`}}>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:700,color:u.habilitado?C.success:C.danger}}>{u.habilitado?"✅ Habilitado para operar":"🔒 Deshabilitado"}</div>
+                          <div style={{fontSize:11,color:C.muted,marginTop:2}}>{u.habilitado?"Puede ver solicitudes, ofertar e iniciar viajes":"No puede ver ni ofertar solicitudes"}</div>
+                        </div>
+                        <button onClick={()=>toggleHabilitar(u.id)}
+                          style={{...st.btnSm(u.habilitado?C.danger:C.success),flexShrink:0}}>
+                          {u.habilitado?"Deshabilitar":"Habilitar"}
+                        </button>
+                      </div>
                       <div style={{fontSize:12,fontWeight:700,marginBottom:8,color:C.text}}>🚗 Tipo de vehículo (afecta tarifas sugeridas)</div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
                         {Object.entries(tarifas).map(([k,t])=>(
