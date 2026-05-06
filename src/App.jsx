@@ -1,4 +1,13 @@
 import { useState, useRef, useEffect } from "react";
+import { auth, db } from "./firebase.js";
+import {
+  createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  signOut, onAuthStateChanged,
+} from "firebase/auth";
+import {
+  collection, doc, setDoc, getDoc, addDoc, updateDoc,
+  deleteDoc, onSnapshot, query, orderBy, serverTimestamp,
+} from "firebase/firestore";
 
 // ─── COLORES ───────────────────────────────────────────────────────────────
 const C = {
@@ -634,20 +643,20 @@ function ModalCalificar({fletyer,onCalificar,onCerrar}){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// COMPONENTE PRINCIPAL
+// COMPONENTE PRINCIPAL CON FIREBASE
 // ══════════════════════════════════════════════════════════════════════════
 export default function FLETY(){
-  const[usuarios,setUsuarios]=useState(initUsuarios);
-  const[solicitudes,setSolicitudes]=useState(initSolicitudes);
+  const[fireUser,setFireUser]=useState(undefined);
+  const[perfil,setPerfil]=useState(null);
+  const[usuarios,setUsuarios]=useState([]);
+  const[solicitudes,setSolicitudes]=useState([]);
   const[tarifas,setTarifas]=useState(TARIFAS_INIT);
   const[comisionPct,setComisionPct]=useState(COMISION_INIT);
-  const[pantalla,setPantalla]=useState("inicio");
   const[tab,setTab]=useState("inicio");
-  const[tipoUsuario,setTipoUsuario]=useState(null);
-  const[usuarioActual,setUsuarioActual]=useState(null);
-  const[loginForm,setLoginForm]=useState({nombre:"",pass:""});
+  const[tipoReg,setTipoReg]=useState(null);
+  const[loginForm,setLoginForm]=useState({email:"",pass:""});
   const[loginError,setLoginError]=useState("");
-  const[regForm,setRegForm]=useState({nombre:"",edad:"",direccion:"",telefono:"",vehiculo:"",vehiculoKey:"camioneta",pass:""});
+  const[regForm,setRegForm]=useState({nombre:"",email:"",edad:"",direccion:"",telefono:"",vehiculo:"",pass:""});
   const[nuevaSol,setNuevaSol]=useState({tipo:"mudanza",origen:"",destino:"",descripcion:""});
   const[avisoPublicado,setAvisoPublicado]=useState(false);
   const[chatActivo,setChatActivo]=useState(null);
@@ -656,314 +665,270 @@ export default function FLETY(){
   const[editData,setEditData]=useState({});
   const[perfilVisto,setPerfilVisto]=useState(null);
   const[modalCalificar,setModalCalificar]=useState(null);
-  // Precio que cada fletyer está editando (por solicitudId)
   const[editandoPrecio,setEditandoPrecio]=useState({});
-  // Admin edición de tarifas
   const[editTarifas,setEditTarifas]=useState(false);
   const[tarifasEdit,setTarifasEdit]=useState({});
   const[comisionEdit,setComisionEdit]=useState(COMISION_INIT);
+  const[subiendo,setSubiendo]=useState(false);
   const fotoRef=useRef();
   const libretaImgRef=useRef();
   const cedulaFrenteRef=useRef();
   const cedulaDorsoRef=useRef();
 
-  // ── Estado del precio en curso para un fletyer ──
-  function getPrecioInput(solId){ return editandoPrecio[solId]??"";}
-  function setPrecioInput(solId,val){ setEditandoPrecio(p=>({...p,[solId]:val}));}
+  const getPrecioInput=(id)=>editandoPrecio[id]??"";
+  const setPrecioInput=(id,v)=>setEditandoPrecio(p=>({...p,[id]:v}));
 
-  // ── Notificaciones badge ──
+  // ── Auth listener ──
+  useEffect(()=>{
+    return onAuthStateChanged(auth,async(u)=>{
+      setFireUser(u);
+      if(u){const s=await getDoc(doc(db,"usuarios",u.uid));if(s.exists())setPerfil({id:u.uid,...s.data()});else setPerfil(null);}
+      else setPerfil(null);
+    });
+  },[]);
+
+  // ── Usuarios en tiempo real ──
+  useEffect(()=>onSnapshot(collection(db,"usuarios"),s=>setUsuarios(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
+
+  // ── Solicitudes en tiempo real ──
+  useEffect(()=>{
+    try{return onSnapshot(query(collection(db,"solicitudes"),orderBy("creadoEn","desc")),s=>setSolicitudes(s.docs.map(d=>({id:d.id,...d.data()}))));}
+    catch(e){return onSnapshot(collection(db,"solicitudes"),s=>setSolicitudes(s.docs.map(d=>({id:d.id,...d.data()}))));}
+  },[]);
+
+  // ── Config en tiempo real ──
+  useEffect(()=>onSnapshot(doc(db,"config","tarifas"),s=>{if(s.exists()){const d=s.data();if(d.tarifas)setTarifas(d.tarifas);if(d.comisionPct)setComisionPct(d.comisionPct);}}),[]);
+
+  // ── Sincronizar perfil con cambios de Firestore ──
+  useEffect(()=>{if(fireUser&&usuarios.length){const u=usuarios.find(x=>x.id===fireUser.uid);if(u)setPerfil(u);}},[usuarios,fireUser]);
+
   const badgeSolicitudes=(()=>{
-    if(!usuarioActual)return 0;
-    if(tipoUsuario==="cliente"){
-      return solicitudes.filter(s=>s.clienteId===usuarioActual.id&&(
-        Object.keys(s.chats).some(fid=>s.chats[fid].some(m=>m.de==="fletyer"))||
-        Object.keys(s.ofertasFletyer||{}).length>0
-      )).length;
-    }
-    if(tipoUsuario==="fletyer"){
-      return solicitudes.filter(s=>s.estado==="en_curso"&&s.fleteroAceptado===usuarioActual.id&&s.chats[usuarioActual.id]?.some(m=>m.de==="cliente")).length;
-    }
+    if(!perfil)return 0;
+    if(perfil.tipo==="cliente")return solicitudes.filter(s=>s.clienteId===perfil.id&&Object.keys(s.ofertasFletyer||{}).length>0).length;
+    if(perfil.tipo==="fletyer")return solicitudes.filter(s=>s.estado==="en_curso"&&s.fleteroAceptado===perfil.id&&s.chats?.[perfil.id]?.some(m=>m.de==="cliente")).length;
     return 0;
   })();
 
-  // ── LOGIN ──
-  const login=()=>{
-    const u=usuarios.find(x=>x.nombre.toLowerCase()===loginForm.nombre.toLowerCase()&&x.pass===loginForm.pass);
-    if(!u){setLoginError("Usuario o contraseña incorrectos");return;}
-    if(u.tipo!==tipoUsuario){
-      setLoginError(`Esta cuenta es de tipo "${u.tipo==="cliente"?"Cliente":u.tipo==="fletyer"?"Fletyer":"Admin"}". Volvé al inicio y elegí el botón correcto.`);
-      return;
-    }
-    setUsuarioActual(u);setTipoUsuario(u.tipo);setLoginError("");
-    setPantalla("app");setTab(u.tipo==="admin"?"admin-sols":"inicio");
-  };
-
   // ── REGISTRO ──
-  const registrar=()=>{
-    const vKey=detectarVehiculoKey(regForm.vehiculo);
-    const docsCampos=tipoUsuario==="fletyer"?{libretaDesde:"",libretaHasta:"",libretaImg:null,cedulaFrente:null,cedulaDorso:null,habilitado:false}:{};
-    const nuevo={id:Date.now(),tipo:tipoUsuario,...regForm,...docsCampos,vehiculoKey:vKey,edad:parseInt(regForm.edad),foto:null,calificaciones:[]};
-    setUsuarios(p=>[...p,nuevo]);setUsuarioActual(nuevo);
-    setPantalla("app");setTab("inicio");
+  const registrar=async()=>{
+    setLoginError("");
+    if(!regForm.nombre||!regForm.email||!regForm.pass){setLoginError("Completá nombre, email y contraseña");return;}
+    try{
+      const cred=await createUserWithEmailAndPassword(auth,regForm.email,regForm.pass);
+      const vKey=detectarVehiculoKey(regForm.vehiculo);
+      await setDoc(doc(db,"usuarios",cred.user.uid),{
+        nombre:regForm.nombre,email:regForm.email,tipo:tipoReg.replace("-registro",""),
+        edad:parseInt(regForm.edad)||0,direccion:regForm.direccion,telefono:regForm.telefono,
+        vehiculo:regForm.vehiculo||"",vehiculoKey:vKey,foto:"",calificaciones:[],habilitado:false,
+        ...(tipoReg.includes("fletyer")?{libretaDesde:"",libretaHasta:"",libretaImg:"",cedulaFrente:"",cedulaDorso:""}:{}),
+        creadoEn:serverTimestamp(),
+      });
+      setTab("inicio");
+    }catch(e){
+      if(e.code==="auth/email-already-in-use")setLoginError("Ese email ya está registrado");
+      else if(e.code==="auth/weak-password")setLoginError("La contraseña debe tener al menos 6 caracteres");
+      else setLoginError("Error: "+e.message);
+    }
   };
 
-  const toggleHabilitar=(userId)=>{
-    setUsuarios(p=>p.map(u=>u.id===userId?{...u,habilitado:!u.habilitado}:u));
+  // ── LOGIN ──
+  const login=async()=>{
+    setLoginError("");
+    try{
+      const cred=await signInWithEmailAndPassword(auth,loginForm.email,loginForm.pass);
+      // Verificar que el tipo coincida con el botón elegido
+      const snap=await getDoc(doc(db,"usuarios",cred.user.uid));
+      if(snap.exists()){
+        const tipoReal=snap.data().tipo;
+        const tipoElegido=tipoReg.replace("-login","");
+        if(tipoReal!==tipoElegido){
+          await signOut(auth);
+          setLoginError(`Esta cuenta es de tipo "${tipoReal==="cliente"?"Cliente":tipoReal==="fletyer"?"Fletyer":"Admin"}". Volvé al inicio y elegí el botón correcto.`);
+        }
+      }
+    }catch(e){
+      if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential")setLoginError("Email o contraseña incorrectos");
+      else if(!e.code)return;
+      else setLoginError("Error: "+e.message);
+    }
   };
+
+  const salir=()=>{signOut(auth);setTab("inicio");setChatActivo(null);setTipoReg(null);};
 
   // ── PUBLICAR SOLICITUD ──
   const publicarSolicitud=async()=>{
     if(!nuevaSol.origen||!nuevaSol.destino)return;
     const[c1,c2]=await Promise.all([geocodificar(nuevaSol.origen),geocodificar(nuevaSol.destino)]);
     const dist=distanciaHaversine(c1,c2);
-    const s={id:Date.now(),clienteId:usuarioActual.id,clienteNombre:usuarioActual.nombre,
-      clienteTelefono:usuarioActual.telefono,...nuevaSol,fecha:new Date().toISOString().split("T")[0],
-      estado:"activa",chats:{},ofertasFletyer:{},fleteroAceptado:null,calificado:false,
-      distancia:dist,viajeInicio:null,viajeFin:null,tiempoTotal:null,comisionPagada:false};
-    setSolicitudes(p=>[...p,s]);
+    await addDoc(collection(db,"solicitudes"),{
+      clienteId:perfil.id,clienteNombre:perfil.nombre,clienteTelefono:perfil.telefono||"",
+      tipo:nuevaSol.tipo,origen:nuevaSol.origen,destino:nuevaSol.destino,
+      descripcion:nuevaSol.descripcion,distancia:dist,
+      fecha:new Date().toISOString().split("T")[0],estado:"activa",
+      chats:{},ofertasFletyer:{},fleteroAceptado:null,calificado:false,
+      precioFletyer:null,viajeInicio:null,viajeFin:null,tiempoTotal:null,comisionPagada:false,
+      creadoEn:serverTimestamp(),
+    });
     setAvisoPublicado(true);setTimeout(()=>setAvisoPublicado(false),3500);
     setNuevaSol({tipo:"mudanza",origen:"",destino:"",descripcion:""});
     setTab("solicitudes");
   };
 
-  // ── GUARDAR PRECIO FLETYER (crea oferta y registro en chat si no hay msgs) ──
-  const guardarOfertaFletyer=(solId,precio)=>{
-    if(!precio||parseFloat(precio)<=0)return;
-    const p=parseFloat(precio);
-    setSolicitudes(prev=>prev.map(s=>{
-      if(s.id!==solId)return s;
-      const ofertasFletyer={...s.ofertasFletyer,[usuarioActual.id]:{precio:p,nombre:usuarioActual.nombre,bloqueado:false}};
-      // Si el fletyer no tiene mensajes en el chat, agregamos un mensaje automático de oferta
-      let chats={...s.chats};
-      if(!chats[usuarioActual.id]||chats[usuarioActual.id].length===0){
-        const sol=s;
-        const labelPrecio=sol.tipo==="mudanza"?`${formatUYU(p)}/hora`:`${formatUYU(p)} total`;
-        chats[usuarioActual.id]=[{de:"fletyer",fletyerId:usuarioActual.id,fletyerNombre:usuarioActual.nombre,
-          texto:`¡Hola! Me ofrezco para realizar este servicio. Mi precio es ${labelPrecio}. ¿Te parece bien?`,
-          hora:new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"}),esOfertaAutomatica:true}];
-      }
-      return{...s,ofertasFletyer,chats};
-    }));
-    setPrecioInput(solId,"");
-  };
-
-  // ── MODIFICAR PRECIO (solo si no está bloqueado) ──
-  const modificarOferta=(solId,precio)=>{
-    if(!precio||parseFloat(precio)<=0)return;
-    const p=parseFloat(precio);
-    setSolicitudes(prev=>prev.map(s=>{
-      if(s.id!==solId)return s;
-      const oferta=s.ofertasFletyer[usuarioActual.id];
-      if(!oferta||oferta.bloqueado)return s;
-      const ofertasFletyer={...s.ofertasFletyer,[usuarioActual.id]:{...oferta,precio:p}};
-      // Actualizar mensaje automático si existe
-      let chats={...s.chats};
-      if(chats[usuarioActual.id]){
-        chats[usuarioActual.id]=chats[usuarioActual.id].map(m=>{
-          if(!m.esOfertaAutomatica)return m;
-          const labelPrecio=s.tipo==="mudanza"?`${formatUYU(p)}/hora`:`${formatUYU(p)} total`;
-          return{...m,texto:`¡Hola! Me ofrezco para realizar este servicio. Mi precio es ${labelPrecio}. ¿Te parece bien?`};
-        });
-      }
-      return{...s,ofertasFletyer,chats};
-    }));
-    setPrecioInput(solId,"");
-  };
-
-  // ── ACEPTAR FLETYER (bloquea oferta) ──
-  const aceptarFletyer=(solId,fletyerId)=>{
-    setSolicitudes(prev=>prev.map(s=>{
-      if(s.id!==solId)return s;
-      const ofertasFletyer={...s.ofertasFletyer};
-      if(ofertasFletyer[fletyerId]) ofertasFletyer[fletyerId]={...ofertasFletyer[fletyerId],bloqueado:true};
-      const precioFletyer=ofertasFletyer[fletyerId]?.precio||0;
-      return{...s,fleteroAceptado:fletyerId,estado:"en_curso",ofertasFletyer,precioFletyer};
-    }));
-  };
-
-  // ── INICIAR / FINALIZAR VIAJE ──
-  const iniciarViaje=(solId)=>setSolicitudes(p=>p.map(s=>s.id===solId?{...s,viajeInicio:Date.now()}:s));
-  const finalizarViaje=(solId,seg)=>setSolicitudes(p=>p.map(s=>s.id===solId?{...s,estado:"finalizado",viajeFin:Date.now(),tiempoTotal:seg||null}:s));
-
-  // ── CANCELAR VIAJE ──
-  const cancelarViaje=(solId)=>{
-    setSolicitudes(p=>p.map(s=>s.id===solId?{...s,estado:"activa",fleteroAceptado:null,viajeInicio:null,viajeFin:null,tiempoTotal:null,precioFletyer:null,
-      ofertasFletyer:Object.fromEntries(Object.entries(s.ofertasFletyer).map(([k,v])=>[k,{...v,bloqueado:false}]))}:s));
-    setChatActivo(null);
-  };
-
-  // ── CALIFICAR ──
-  const calificar=(solId,fletyerId,estrellas,comentario,clienteNombre)=>{
-    const fId=Number(fletyerId);
-    setUsuarios(p=>p.map(u=>u.id===fId?{...u,calificaciones:[...(u.calificaciones||[]),{estrellas,comentario,cliente:clienteNombre}]}:u));
-    setSolicitudes(p=>p.map(s=>s.id===solId?{...s,calificado:true}:s));
-    setModalCalificar(null);
-  };
-
-  // ── MARCAR COMISION PAGADA (admin) ──
-  const eliminarSolicitud=(solId)=>{
-    setSolicitudes(p=>p.filter(s=>s.id!==solId));
-  };
-
-  // ── ENVIAR MENSAJE ──
-  const enviarMsg=()=>{
+  // ── MENSAJE ──
+  const enviarMsg=async()=>{
     if(!nuevoMsg.trim()||!chatActivo)return;
     const{solicitudId,fletyerId}=chatActivo;
-    const msg={de:tipoUsuario,texto:nuevoMsg,hora:new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"}),
-      fletyerId:tipoUsuario==="fletyer"?usuarioActual.id:undefined,fletyerNombre:tipoUsuario==="fletyer"?usuarioActual.nombre:undefined};
-    setSolicitudes(p=>p.map(s=>{if(s.id!==solicitudId)return s;const chats={...s.chats};chats[fletyerId]=[...(chats[fletyerId]||[]),msg];return{...s,chats};}));
+    const sol=solicitudes.find(s=>s.id===solicitudId);if(!sol)return;
+    const msg={de:perfil.tipo,texto:nuevoMsg,hora:new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"}),...(perfil.tipo==="fletyer"?{fletyerId:perfil.id,fletyerNombre:perfil.nombre}:{})};
+    const chats={...sol.chats};chats[fletyerId]=[...(chats[fletyerId]||[]),msg];
+    await updateDoc(doc(db,"solicitudes",solicitudId),{chats});
     setNuevoMsg("");
   };
 
-  // ── EDITAR PERFIL ──
-  const guardarEdicion=()=>{
-    const vKey=detectarVehiculoKey(editData.vehiculo||"");
-    setUsuarios(p=>p.map(u=>u.id===usuarioActual.id?{...u,...editData,vehiculoKey:vKey}:u));
-    setUsuarioActual(p=>({...p,...editData,vehiculoKey:vKey}));setEditMode(false);
+  // ── OFERTA FLETYER ──
+  const guardarOfertaFletyer=async(solId,precio)=>{
+    if(!precio||parseFloat(precio)<=0)return;
+    const p=parseFloat(precio);
+    const sol=solicitudes.find(s=>s.id===solId);if(!sol)return;
+    const labelPrecio=sol.tipo==="mudanza"?`${formatUYU(p)}/hora`:`${formatUYU(p)} total`;
+    const ofertasFletyer={...sol.ofertasFletyer,[perfil.id]:{precio:p,nombre:perfil.nombre,bloqueado:false}};
+    let chats={...sol.chats};
+    if(!chats[perfil.id]||chats[perfil.id].length===0){
+      chats[perfil.id]=[{de:"fletyer",fletyerId:perfil.id,fletyerNombre:perfil.nombre,
+        texto:`¡Hola! Me ofrezco para realizar este servicio. Mi precio es ${labelPrecio}. ¿Te parece bien?`,
+        hora:new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"}),esOfertaAutomatica:true}];
+    }
+    await updateDoc(doc(db,"solicitudes",solId),{ofertasFletyer,chats});
+    setPrecioInput(solId,"");
   };
-  const handleFoto=(e)=>{
-    const file=e.target.files[0];if(!file)return;
+
+  const modificarOferta=async(solId,precio)=>{
+    if(!precio||parseFloat(precio)<=0)return;
+    const p=parseFloat(precio);
+    const sol=solicitudes.find(s=>s.id===solId);if(!sol)return;
+    const oferta=sol.ofertasFletyer?.[perfil.id];if(!oferta||oferta.bloqueado)return;
+    const labelPrecio=sol.tipo==="mudanza"?`${formatUYU(p)}/hora`:`${formatUYU(p)} total`;
+    const ofertasFletyer={...sol.ofertasFletyer,[perfil.id]:{...oferta,precio:p}};
+    let chats={...sol.chats};
+    if(chats[perfil.id])chats[perfil.id]=chats[perfil.id].map(m=>m.esOfertaAutomatica?{...m,texto:`¡Hola! Me ofrezco para realizar este servicio. Mi precio es ${labelPrecio}. ¿Te parece bien?`}:m);
+    await updateDoc(doc(db,"solicitudes",solId),{ofertasFletyer,chats});
+    setPrecioInput(solId,"");
+  };
+
+  const aceptarFletyer=async(solId,fletyerId)=>{
+    const sol=solicitudes.find(s=>s.id===solId);if(!sol)return;
+    const ofertasFletyer={...sol.ofertasFletyer};
+    if(ofertasFletyer[fletyerId])ofertasFletyer[fletyerId]={...ofertasFletyer[fletyerId],bloqueado:true};
+    await updateDoc(doc(db,"solicitudes",solId),{fleteroAceptado:fletyerId,estado:"en_curso",ofertasFletyer,precioFletyer:ofertasFletyer[fletyerId]?.precio||0});
+  };
+
+  const iniciarViaje=async(solId)=>await updateDoc(doc(db,"solicitudes",solId),{viajeInicio:Date.now()});
+  const finalizarViaje=async(solId,seg)=>await updateDoc(doc(db,"solicitudes",solId),{estado:"finalizado",viajeFin:Date.now(),tiempoTotal:seg||null});
+  const cancelarViaje=async(solId)=>{
+    const sol=solicitudes.find(s=>s.id===solId);if(!sol)return;
+    const ofertasFletyer=Object.fromEntries(Object.entries(sol.ofertasFletyer||{}).map(([k,v])=>[k,{...v,bloqueado:false}]));
+    await updateDoc(doc(db,"solicitudes",solId),{estado:"activa",fleteroAceptado:null,viajeInicio:null,viajeFin:null,tiempoTotal:null,precioFletyer:null,ofertasFletyer});
+    setChatActivo(null);
+  };
+  const eliminarSolicitud=async(solId)=>await deleteDoc(doc(db,"solicitudes",solId));
+
+  const calificar=async(solId,fletyerId,estrellas,comentario)=>{
+    const fId=String(fletyerId);
+    const snap=await getDoc(doc(db,"usuarios",fId));if(!snap.exists())return;
+    const califs=[...(snap.data().calificaciones||[]),{estrellas,comentario,cliente:perfil.nombre}];
+    await updateDoc(doc(db,"usuarios",fId),{calificaciones:califs});
+    await updateDoc(doc(db,"solicitudes",solId),{calificado:true});
+    setModalCalificar(null);
+  };
+
+  const marcarComisionPagada=async(solId)=>await updateDoc(doc(db,"solicitudes",solId),{comisionPagada:true});
+  const toggleHabilitar=async(userId)=>{const u=usuarios.find(x=>x.id===userId);if(u)await updateDoc(doc(db,"usuarios",userId),{habilitado:!u.habilitado});};
+  const asignarVehiculoAdmin=async(userId,vKey)=>await updateDoc(doc(db,"usuarios",userId),{vehiculoKey:vKey,vehiculo:tarifas[vKey].label});
+  const guardarTarifas=async()=>{await setDoc(doc(db,"config","tarifas"),{tarifas:tarifasEdit,comisionPct:parseFloat(comisionEdit)||15});setTarifas(tarifasEdit);setComisionPct(parseFloat(comisionEdit)||15);setEditTarifas(false);};
+
+  // ── FOTOS (base64 en Firestore, sin Storage) ──
+  const handleFoto=async(e)=>{
+    const file=e.target.files[0];if(!file)return;setSubiendo(true);
     const reader=new FileReader();
-    reader.onload=ev=>{const foto=ev.target.result;setUsuarios(p=>p.map(u=>u.id===usuarioActual.id?{...u,foto}:u));setUsuarioActual(p=>({...p,foto}));};
+    reader.onload=async(ev)=>{await updateDoc(doc(db,"usuarios",perfil.id),{foto:ev.target.result});setSubiendo(false);};
     reader.readAsDataURL(file);
   };
-  const handleDocImg=(campo,e)=>{
-    const file=e.target.files[0];if(!file)return;
+  const handleDocImg=async(campo,e)=>{
+    const file=e.target.files[0];if(!file)return;setSubiendo(true);
     const reader=new FileReader();
-    reader.onload=ev=>{
-      const val=ev.target.result;
-      setUsuarios(p=>p.map(u=>u.id===usuarioActual.id?{...u,[campo]:val}:u));
-      setUsuarioActual(p=>({...p,[campo]:val}));
-    };
+    reader.onload=async(ev)=>{await updateDoc(doc(db,"usuarios",perfil.id),{[campo]:ev.target.result});setSubiendo(false);};
     reader.readAsDataURL(file);
   };
+  const guardarEdicion=async()=>{const vKey=detectarVehiculoKey(editData.vehiculo||"");await updateDoc(doc(db,"usuarios",perfil.id),{...editData,vehiculoKey:vKey});setEditMode(false);};
 
-  // ── ADMIN: guardar tarifas ──
-  const guardarTarifas=()=>{
-    setTarifas(tarifasEdit);setComisionPct(parseFloat(comisionEdit)||15);setEditTarifas(false);
-  };
-
-  // ── ADMIN: asignar vehiculoKey a fletyer ──
-  const asignarVehiculoAdmin=(userId,vKey)=>{
-    const tarifa=tarifas[vKey];
-    setUsuarios(p=>p.map(u=>u.id===userId?{...u,vehiculoKey:vKey,vehiculo:tarifa.label}:u));
-  };
-
-  const salir=()=>{setUsuarioActual(null);setTipoUsuario(null);setPantalla("inicio");};
   const estadoLabel=(e)=>({activa:{label:"● Activa",col:C.cyan},en_curso:{label:"🔄 En curso",col:C.warning},finalizado:{label:"✅ Finalizado",col:C.success}}[e]||{label:e,col:C.muted});
 
-  // ── TAB BAR ──
   const TabBar=()=>{
-    const tabs=tipoUsuario==="admin"
-      ?[{id:"admin-sols",icon:"📋",label:"Solicitudes"},{id:"admin-users",icon:"👥",label:"Usuarios"},{id:"admin-config",icon:"⚙️",label:"Config"}]
-      :tipoUsuario==="cliente"
-      ?[{id:"inicio",icon:"🏠",label:"Inicio"},{id:"solicitudes",icon:"📋",label:"Solicitudes"},{id:"cuenta",icon:"👤",label:"Mi Cuenta"}]
-      :[{id:"inicio",icon:"🔍",label:"Disponibles"},{id:"solicitudes",icon:"📋",label:"Mis Trabajos"},{id:"cuenta",icon:"👤",label:"Mi Cuenta"}];
-    return(
-      <div style={st.tabBar}>
-        {tabs.map(t=>(
-          <button key={t.id} style={st.tabBtn(tab===t.id)} onClick={()=>{setTab(t.id);setChatActivo(null);}}>
-            <div style={{position:"relative"}}>
-              <span style={{fontSize:20}}>{t.icon}</span>
-              {t.id==="solicitudes"&&badgeSolicitudes>0&&(
-                <span style={{position:"absolute",top:-4,right:-8,background:C.danger,color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{badgeSolicitudes}</span>
-              )}
-            </div>
-            <span style={{color:tab===t.id?C.blue:C.muted}}>{t.label}</span>
-          </button>
-        ))}
-      </div>
-    );
+    const tipo=perfil?.tipo;
+    const tabs=tipo==="admin"?[{id:"admin-sols",icon:"📋",label:"Solicitudes"},{id:"admin-users",icon:"👥",label:"Usuarios"},{id:"admin-config",icon:"⚙️",label:"Config"}]:tipo==="cliente"?[{id:"inicio",icon:"🏠",label:"Inicio"},{id:"solicitudes",icon:"📋",label:"Solicitudes"},{id:"cuenta",icon:"👤",label:"Mi Cuenta"}]:[{id:"inicio",icon:"🔍",label:"Disponibles"},{id:"solicitudes",icon:"📋",label:"Mis Trabajos"},{id:"cuenta",icon:"👤",label:"Mi Cuenta"}];
+    return<div style={st.tabBar}>{tabs.map(t=><button key={t.id} style={st.tabBtn(tab===t.id)} onClick={()=>{setTab(t.id);setChatActivo(null);}}><div style={{position:"relative"}}><span style={{fontSize:20}}>{t.icon}</span>{t.id==="solicitudes"&&badgeSolicitudes>0&&<span style={{position:"absolute",top:-4,right:-8,background:C.danger,color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{badgeSolicitudes}</span>}</div><span style={{color:tab===t.id?C.blue:C.muted}}>{t.label}</span></button>)}</div>;
   };
 
-  // ─── MODALES GLOBALES ──────────────────────────────────────────────────
-  if(perfilVisto)return<PerfilUsuario u={usuarios.find(u=>u.id===perfilVisto.id)||perfilVisto} onClose={()=>setPerfilVisto(null)}/>;
-  if(modalCalificar){
-    const fl=usuarios.find(u=>u.id===Number(modalCalificar.fletyerId));
-    if(!fl){
-      // Fletyer no encontrado: cerrar el modal silenciosamente
-      setTimeout(()=>setModalCalificar(null),0);
-      return null;
-    }
-    return<ModalCalificar
-      fletyer={fl}
-      onCalificar={(e,c)=>calificar(modalCalificar.solicitudId,Number(modalCalificar.fletyerId),e,c,usuarioActual?.nombre||"")}
-      onCerrar={()=>setModalCalificar(null)}
-    />;
-  }
+  // ── CARGANDO ──
+  if(fireUser===undefined)return<div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}><LogoSVG size={80}/><div style={{fontSize:14,color:C.muted}}>Iniciando FLETY...</div></div>;
 
-  // ═══ PANTALLA INICIO ════════════════════════════════════════════════════
-  if(pantalla==="inicio")return(
-    <div style={{...st.wrap,paddingBottom:0}}>
-      <div style={{width:"100%",background:GRAD,minHeight:"42vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"48px 24px 36px",boxSizing:"border-box"}}>
-        <LogoSVG size={100}/>
-        <div style={{fontSize:13,opacity:0.9,marginTop:8,color:"#fff",textAlign:"center"}}>Conectamos Fletyers con clientes en Uruguay</div>
-        <div style={{display:"flex",gap:12,marginTop:20}}>{["🚚 Rápido","📍 Montevideo","⭐ Confiable"].map(t=><span key={t} style={{background:"rgba(255,255,255,0.2)",color:"#fff",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700}}>{t}</span>)}</div>
-      </div>
-      <div style={{...st.cont,marginTop:-10}}>
-        <div style={{...st.card,boxShadow:"0 4px 24px rgba(0,180,180,0.13)"}}>
-          <div style={{...st.title,textAlign:"center",color:C.blue}}>¿Cómo querés ingresar?</div>
-          <div style={{fontSize:13,color:C.muted,textAlign:"center",marginBottom:18}}>Seleccioná tu perfil</div>
-          <button style={st.btn(GRAD)} onClick={()=>{setTipoUsuario("cliente");setPantalla("login");}}>🏠 Soy Cliente</button>
-          <button style={st.btn(GRAD_B)} onClick={()=>{setTipoUsuario("fletyer");setPantalla("login");}}>🚚 Soy Fletyer</button>
-          <button style={{...st.btnOut(C.muted),color:"#999"}} onClick={()=>{setTipoUsuario("admin");setPantalla("login");}}>⚙️ Administrador</button>
-          <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:4,padding:"8px",background:"#F0FAFA",borderRadius:10}}>
-            <strong>Demo:</strong> Carlos Pérez / Diego Martínez / Ana López · pass: 1234 | Admin FLETY · pass: admin123
+  if(perfilVisto)return<PerfilUsuario u={usuarios.find(u=>u.id===perfilVisto.id)||perfilVisto} onClose={()=>setPerfilVisto(null)}/>;
+  if(modalCalificar){const fl=usuarios.find(u=>u.id===String(modalCalificar.fletyerId));if(!fl){setTimeout(()=>setModalCalificar(null),0);return null;}return<ModalCalificar fletyer={fl} onCalificar={(e,c)=>calificar(modalCalificar.solicitudId,modalCalificar.fletyerId,e,c)} onCerrar={()=>setModalCalificar(null)}/>;}
+
+  // ═══ SIN LOGIN ═══════════════════════════════════════════════════════════
+  if(!fireUser||!perfil){
+    if(!tipoReg)return(
+      <div style={{...st.wrap,paddingBottom:0}}>
+        <div style={{width:"100%",background:GRAD,minHeight:"42vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"48px 24px 36px",boxSizing:"border-box"}}>
+          <LogoSVG size={100}/>
+          <div style={{fontSize:13,opacity:0.9,marginTop:8,color:"#fff",textAlign:"center"}}>Conectamos Fletyers con clientes en Uruguay</div>
+          <div style={{display:"flex",gap:12,marginTop:20}}>{["🚚 Rápido","📍 Montevideo","⭐ Confiable"].map(t=><span key={t} style={{background:"rgba(255,255,255,0.2)",color:"#fff",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700}}>{t}</span>)}</div>
+        </div>
+        <div style={{...st.cont,marginTop:-10}}>
+          <div style={{...st.card,boxShadow:"0 4px 24px rgba(0,180,180,0.13)"}}>
+            <div style={{...st.title,textAlign:"center",color:C.blue}}>¿Cómo querés ingresar?</div>
+            <div style={{fontSize:13,color:C.muted,textAlign:"center",marginBottom:18}}>Seleccioná tu perfil</div>
+            <button style={st.btn(GRAD)} onClick={()=>setTipoReg("cliente-login")}>🏠 Soy Cliente</button>
+            <button style={st.btn(GRAD_B)} onClick={()=>setTipoReg("fletyer-login")}>🚚 Soy Fletyer</button>
+            <button style={{...st.btnOut(C.muted),color:"#999"}} onClick={()=>setTipoReg("admin-login")}>⚙️ Administrador</button>
           </div>
         </div>
       </div>
-    </div>
-  );
-
-  // ═══ LOGIN ══════════════════════════════════════════════════════════════
-  if(pantalla==="login")return(
-    <div style={st.wrap}>
-      <div style={st.header}>
-        <button onClick={()=>setPantalla("inicio")} style={{background:"none",border:"none",color:"#fff",fontSize:20,cursor:"pointer"}}>←</button>
-        <div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark size={26}/><span style={st.logoTxt}>FLETY</span></div>
-        <div/>
-      </div>
-      <div style={st.cont}>
-        <div style={st.card}>
-          <div style={{...st.title,color:C.blue}}>Iniciar sesión</div>
-          <div style={st.sub}>Como {tipoUsuario==="admin"?"Administrador":tipoUsuario==="cliente"?"Cliente":"Fletyer"}</div>
-          <label style={st.label}>Nombre</label>
-          <input style={st.input} placeholder="Tu nombre" value={loginForm.nombre} onChange={e=>setLoginForm(p=>({...p,nombre:e.target.value}))}/>
-          <label style={st.label}>Contraseña</label>
-          <input style={st.input} type="password" value={loginForm.pass} onChange={e=>setLoginForm(p=>({...p,pass:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&login()}/>
-          {loginError&&<div style={{color:C.danger,fontSize:13,marginBottom:10}}>⚠️ {loginError}</div>}
-          <button style={st.btn(tipoUsuario==="fletyer"?GRAD_B:GRAD)} onClick={login}>Ingresar</button>
-          {tipoUsuario!=="admin"&&<button style={st.btnOut(C.cyan)} onClick={()=>setPantalla("registro")}>Crear cuenta nueva</button>}
+    );
+    const tipoActual=tipoReg.replace("-login","").replace("-registro","");
+    const esLogin=tipoReg.endsWith("-login");
+    return(
+      <div style={st.wrap}>
+        <div style={st.header}><button onClick={()=>{setTipoReg(null);setLoginError("");}} style={{background:"none",border:"none",color:"#fff",fontSize:20,cursor:"pointer"}}>←</button><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark size={26}/><span style={st.logoTxt}>FLETY</span></div><div/></div>
+        <div style={st.cont}>
+          <div style={st.card}>
+            <div style={{...st.title,color:C.blue}}>{esLogin?"Iniciar sesión":"Crear cuenta"}</div>
+            <div style={st.sub}>Como {tipoActual==="admin"?"Administrador":tipoActual==="cliente"?"Cliente":"Fletyer"}</div>
+            {!esLogin&&<>
+              <label style={st.label}>Nombre completo</label><input style={st.input} placeholder="Tu nombre" value={regForm.nombre} onChange={e=>setRegForm(p=>({...p,nombre:e.target.value}))}/>
+              <label style={st.label}>Edad</label><input style={st.input} type="number" placeholder="30" value={regForm.edad} onChange={e=>setRegForm(p=>({...p,edad:e.target.value}))}/>
+              <label style={st.label}>Dirección</label><input style={st.input} placeholder="Tu barrio" value={regForm.direccion} onChange={e=>setRegForm(p=>({...p,direccion:e.target.value}))}/>
+              <label style={st.label}>Teléfono</label><input style={st.input} placeholder="09X XXX XXX" value={regForm.telefono} onChange={e=>setRegForm(p=>({...p,telefono:e.target.value}))}/>
+              {tipoActual==="fletyer"&&<><label style={st.label}>Tipo de vehículo</label><input style={st.input} placeholder="Ej: Camioneta 1 tonelada" value={regForm.vehiculo} onChange={e=>setRegForm(p=>({...p,vehiculo:e.target.value}))}/></>}
+            </>}
+            <label style={st.label}>Email</label>
+            <input style={st.input} type="email" placeholder="tu@email.com" value={esLogin?loginForm.email:regForm.email} onChange={e=>esLogin?setLoginForm(p=>({...p,email:e.target.value})):setRegForm(p=>({...p,email:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&esLogin&&login()}/>
+            <label style={st.label}>Contraseña {!esLogin&&"(mín. 6 caracteres)"}</label>
+            <input style={st.input} type="password" placeholder="••••••" value={esLogin?loginForm.pass:regForm.pass} onChange={e=>esLogin?setLoginForm(p=>({...p,pass:e.target.value})):setRegForm(p=>({...p,pass:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&esLogin&&login()}/>
+            {loginError&&<div style={{color:C.danger,fontSize:13,marginBottom:10}}>⚠️ {loginError}</div>}
+            <button style={st.btn(tipoActual==="fletyer"?GRAD_B:GRAD)} onClick={esLogin?login:registrar}>{esLogin?"Ingresar":"Registrarme"}</button>
+            {tipoActual!=="admin"&&<button style={st.btnOut(C.cyan)} onClick={()=>{setLoginError("");setTipoReg(esLogin?`${tipoActual}-registro`:`${tipoActual}-login`);}}>{esLogin?"Crear cuenta nueva":"Ya tengo cuenta, ingresar"}</button>}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  // ═══ REGISTRO ═══════════════════════════════════════════════════════════
-  if(pantalla==="registro")return(
-    <div style={st.wrap}>
-      <div style={st.header}>
-        <button onClick={()=>setPantalla("login")} style={{background:"none",border:"none",color:"#fff",fontSize:20,cursor:"pointer"}}>←</button>
-        <div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark size={26}/><span style={st.logoTxt}>FLETY</span></div>
-        <div/>
-      </div>
-      <div style={st.cont}>
-        <div style={st.card}>
-          <div style={{...st.title,color:C.blue}}>Crear cuenta</div>
-          <div style={st.sub}>{tipoUsuario==="cliente"?"Cuenta de Cliente":"Cuenta de Fletyer"}</div>
-          {["nombre","edad","direccion","telefono",...(tipoUsuario==="fletyer"?["vehiculo"]:[]),"pass"].map(c=>(
-            <div key={c}>
-              <label style={st.label}>{c==="pass"?"Contraseña":c==="vehiculo"?"Tipo de Vehículo":c.charAt(0).toUpperCase()+c.slice(1)}</label>
-              <input style={st.input} type={c==="pass"?"password":"text"} value={regForm[c]||""} onChange={e=>setRegForm(p=>({...p,[c]:e.target.value}))}/>
-            </div>
-          ))}
-          {tipoUsuario==="fletyer"&&<div style={{fontSize:11,color:C.muted,marginBottom:10}}>💡 Ej: "Camioneta 1 tonelada", "Camión 3 toneladas", "Auto", "Moto"</div>}
-          <button style={st.btn(tipoUsuario==="fletyer"?GRAD_B:GRAD)} onClick={registrar}>Registrarme</button>
-        </div>
-      </div>
-    </div>
-  );
+  // ═══ APP ════════════════════════════════════════════════════════════════
+  const tipoUsuario=perfil.tipo;
+  const usuarioActual=perfil;
 
+  // ═══ APP ════════════════════════════════════════════════════════════════
   // ═══ APP ════════════════════════════════════════════════════════════════
   if(pantalla==="app"){
 
