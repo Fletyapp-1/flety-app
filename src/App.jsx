@@ -928,14 +928,10 @@ export default function FLETY(){
   const tipoUsuario=perfil.tipo;
   const usuarioActual=perfil;
 
-  // ═══ APP ════════════════════════════════════════════════════════════════
-  // ═══ APP ════════════════════════════════════════════════════════════════
-  if(pantalla==="app"){
-
-    // ─── CHAT ──────────────────────────────────────────────────────────────
+  // ─── CHAT ──────────────────────────────────────────────────────────────
     if(chatActivo){
       const sol=solicitudes.find(s=>s.id===chatActivo.solicitudId);
-      const msgs=sol?.chats[chatActivo.fletyerId]||[];
+      const msgs=sol?.chats?.[chatActivo.fletyerId]||[];
       const fletyer=usuarios.find(u=>u.id===chatActivo.fletyerId);
       const cliente=usuarios.find(u=>u.id===sol?.clienteId);
       const esCliente=tipoUsuario==="cliente";
@@ -1931,6 +1927,5 @@ export default function FLETY(){
         </div>
       );
     }
-  }
   return null;
 }
