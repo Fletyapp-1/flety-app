@@ -6,7 +6,7 @@ import {
 } from "firebase/auth";
 import {
   collection, doc, setDoc, getDoc, addDoc, updateDoc,
-  deleteDoc, onSnapshot, query, orderBy, serverTimestamp,
+  deleteDoc, onSnapshot, serverTimestamp,
 } from "firebase/firestore";
 
 // ─── COLORES ───────────────────────────────────────────────────────────────
@@ -688,16 +688,34 @@ export default function FLETY(){
   },[]);
 
   // ── Usuarios en tiempo real ──
-  useEffect(()=>onSnapshot(collection(db,"usuarios"),s=>setUsuarios(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,"usuarios"),(s)=>{
+      setUsuarios(s.docs.map(d=>({id:d.id,...d.data()})));
+    },(err)=>console.warn("usuarios:",err));
+    return unsub;
+  },[]);
 
   // ── Solicitudes en tiempo real ──
   useEffect(()=>{
-    try{return onSnapshot(query(collection(db,"solicitudes"),orderBy("creadoEn","desc")),s=>setSolicitudes(s.docs.map(d=>({id:d.id,...d.data()}))));}
-    catch(e){return onSnapshot(collection(db,"solicitudes"),s=>setSolicitudes(s.docs.map(d=>({id:d.id,...d.data()}))));}
+    const unsub=onSnapshot(collection(db,"solicitudes"),(s)=>{
+      const docs=s.docs.map(d=>({id:d.id,...d.data()}));
+      docs.sort((a,b)=>{
+        const fa=a.creadoEn?.seconds||0;
+        const fb=b.creadoEn?.seconds||0;
+        return fb-fa;
+      });
+      setSolicitudes(docs);
+    },(err)=>console.warn("solicitudes:",err));
+    return unsub;
   },[]);
 
   // ── Config en tiempo real ──
-  useEffect(()=>onSnapshot(doc(db,"config","tarifas"),s=>{if(s.exists()){const d=s.data();if(d.tarifas)setTarifas(d.tarifas);if(d.comisionPct)setComisionPct(d.comisionPct);}}),[]);
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,"config","tarifas"),(s)=>{
+      if(s.exists()){const d=s.data();if(d.tarifas)setTarifas(d.tarifas);if(d.comisionPct)setComisionPct(d.comisionPct);}
+    },(err)=>console.warn("config:",err));
+    return unsub;
+  },[]);
 
   // ── Sincronizar perfil con cambios de Firestore ──
   useEffect(()=>{if(fireUser&&usuarios.length){const u=usuarios.find(x=>x.id===fireUser.uid);if(u)setPerfil(u);}},[usuarios,fireUser]);
