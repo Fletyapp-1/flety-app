@@ -741,6 +741,7 @@ export default function App() {
               <div style={{fontSize:13}}>📍 {sol.origen}</div><div style={{fontSize:13}}>🏁 {sol.destino}</div>
               {sol.descripcion&&<div style={{fontSize:12,color:C.muted,marginTop:4,fontStyle:"italic"}}>"{sol.descripcion}"</div>}
               {sol.estado==="finalizado"&&<ResumenViaje sol={sol} comisionPct={comisionPct} mostrarComision={false}/>}
+              {sol.estado==="en_curso"&&sol.viajeInicio&&!sol.viajeFin&&<ContadorViaje sol={sol} tipoUsuario="cliente" onIniciar={null} onFinalizar={null}/>}
               <div style={{fontSize:12,color:C.muted,marginTop:6}}>💬 {chatsKeys.length} Fletyer(s) contactaron</div>
               {sol.estado==="en_curso"&&!sol.viajeInicio&&<button style={{...st.btnOut(C.warning),color:C.warning,marginTop:8}} onClick={()=>cancelarViaje(sol.id)}>↩️ Cancelar viaje</button>}
               {sol.estado==="finalizado"&&!sol.calificado&&<button style={{...st.btn(C.warning),marginTop:8}} onClick={()=>setModalCal({solId:sol.id,fid:sol.fleteroAceptado})}>⭐ Calificar al Fletyer</button>}
@@ -857,6 +858,7 @@ export default function App() {
               <div style={{fontSize:13}}>📍 {sol.origen}</div><div style={{fontSize:13}}>🏁 {sol.destino}</div>
               {sol.precioFletyer&&<div style={{background:sol.tipo==="mudanza"?`${C.blue}12`:`${C.cyan}12`,borderRadius:10,padding:"8px 12px",marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:12,color:C.muted,fontWeight:700}}>{sol.tipo==="mudanza"?"💰 Tu precio/h":"💰 Precio acordado"}</span><span style={{fontSize:17,fontWeight:900,color:sol.tipo==="mudanza"?C.blue:C.cyan}}>{formatUYU(sol.precioFletyer)}{sol.tipo==="mudanza"?"/h":""}</span></div>}
               {sol.estado==="finalizado"&&<ResumenViaje sol={sol} comisionPct={comisionPct}/>}
+              {sol.estado==="en_curso"&&sol.viajeInicio&&!sol.viajeFin&&<ContadorViaje sol={sol} tipoUsuario="fletyer" onIniciar={()=>iniciarViaje(sol.id)} onFinalizar={s=>finalizarViaje(sol.id,s)}/>}
               <button style={{...st.btn(GRAD,8),marginTop:10}} onClick={()=>setChatActivo({solId:sol.id,fid:String(UA.id)})}>💬 Chat</button>
               {sol.estado==="en_curso"&&!sol.viajeInicio&&<button style={{...st.btnOut(C.warning),color:C.warning,marginBottom:0}} onClick={()=>cancelarViaje(sol.id)}>↩️ Cancelar trabajo</button>}
             </div>
