@@ -36,7 +36,13 @@ function formatTiempo(s) {
 }
 function costoViaje(sol) {
   if (!sol.precioFletyer) return 0;
-  if (sol.tipo === "mudanza" && sol.tiempoTotal) return Math.round(sol.precioFletyer * (sol.tiempoTotal / 3600));
+  if (sol.tipo === "mudanza" && sol.tiempoTotal) {
+    const hMin = sol.horasMin || 1;
+    const segsMin = hMin * 3600;
+    // Si el tiempo real es menor al mínimo, se cobra el mínimo
+    const segsEfectivos = Math.max(sol.tiempoTotal, segsMin);
+    return Math.round(sol.precioFletyer * (segsEfectivos / 3600));
+  }
   return sol.precioFletyer;
 }
 
@@ -268,13 +274,36 @@ function ContadorViaje({sol, tipoUsuario, onIniciar, onFinalizar}) {
   if (!sol.viajeInicio && esFletyer) return <div style={{background:`${C.warning}15`,border:`1.5px solid ${C.warning}55`,borderRadius:14,padding:"14px",marginBottom:10}}><div style={{fontSize:13,fontWeight:700,color:C.warning,marginBottom:8}}>🚦 Listo para arrancar</div><button style={st.btn(`linear-gradient(135deg,${C.success},#00a87a)`)} onClick={onIniciar}>🚀 Iniciar viaje</button></div>;
   if (!sol.viajeInicio && !esFletyer) return <div style={{background:`${C.warning}15`,borderRadius:14,padding:"12px 16px",marginBottom:10}}><span style={{fontSize:13,color:C.warning,fontWeight:700}}>⏳ Esperando que el Fletyer inicie el viaje...</span></div>;
   if (activo) {
-    const costoActual = sol.tipo==="mudanza" ? Math.round((sol.precioFletyer||0)*(seg/3600)) : (sol.precioFletyer||0);
+    const precio = sol.precioFletyer || 0;
+    const hMin = sol.horasMin || 1;
+    const segsMin = hMin * 3600;
+    const esMudanza = sol.tipo === "mudanza";
+    // Costo actual: si no llegó al mínimo se muestra el mínimo, si lo superó se cobra por tiempo real
+    const segsEfectivos = esMudanza ? Math.max(seg, segsMin) : seg;
+    const costoActual = esMudanza ? Math.round(precio * (segsEfectivos / 3600)) : precio;
+    const enMinimo = esMudanza && seg < segsMin;
+    const tiempoMinFaltante = esMudanza ? Math.max(0, segsMin - seg) : 0;
     return (
       <div style={{background:`linear-gradient(135deg,${C.success}18,${C.cyan}12)`,border:`2px solid ${C.success}55`,borderRadius:14,padding:"16px",marginBottom:10}}>
         <div style={{textAlign:"center",marginBottom:12}}>
           <div style={{fontSize:11,fontWeight:700,color:C.success,textTransform:"uppercase"}}>🟢 Viaje en curso</div>
           <div style={{fontSize:44,fontWeight:900,color:C.text,fontFamily:"monospace"}}>{formatTiempo(seg)}</div>
-          <div style={{fontSize:13,color:C.muted,marginTop:4}}>{sol.tipo==="mudanza"?`Acumulado: ${formatUYU(costoActual)} · tarifa ${formatUYU(sol.precioFletyer||0)}/h`:`Precio fijo: ${formatUYU(sol.precioFletyer||0)}`}</div>
+          {esMudanza && (
+            <div style={{marginTop:6}}>
+              {enMinimo ? (
+                <div style={{background:`${C.warning}22`,borderRadius:10,padding:"6px 10px",display:"inline-block"}}>
+                  <div style={{fontSize:12,color:C.warning,fontWeight:700}}>⏱ Mínimo {hMin}h — faltan {formatTiempo(tiempoMinFaltante)}</div>
+                  <div style={{fontSize:13,color:C.text,fontWeight:700,marginTop:2}}>Costo mínimo: {formatUYU(costoActual)}</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{fontSize:12,color:C.success,fontWeight:700}}>✅ Superó el mínimo de {hMin}h</div>
+                  <div style={{fontSize:13,color:C.muted,marginTop:2}}>Acumulado: <strong style={{color:C.blue}}>{formatUYU(costoActual)}</strong> · {formatUYU(precio)}/h</div>
+                </div>
+              )}
+            </div>
+          )}
+          {!esMudanza && <div style={{fontSize:13,color:C.muted,marginTop:4}}>Precio fijo: <strong style={{color:C.cyan}}>{formatUYU(precio)}</strong></div>}
         </div>
         {esFletyer && <button style={st.btn(`linear-gradient(135deg,${C.danger},#ff8c60)`)} onClick={()=>onFinalizar(seg)}>🏁 Finalizar viaje</button>}
         {!esFletyer && <div style={{fontSize:12,color:C.success,textAlign:"center",fontWeight:600}}>El Fletyer está en camino...</div>}
@@ -348,6 +377,7 @@ export default function App() {
   const [verPerfil, setVerPerfil] = useState(null);
   const [modalCal, setModalCal] = useState(null);
   const [precioEdit, setPrecioEdit] = useState({});
+  const [horasMin, setHorasMin] = useState({}); // horas mínimas por solId
   const [editTar, setEditTar] = useState(false);
   const [tarEdit, setTarEdit] = useState({});
   const [comEdit, setComEdit] = useState(COMISION_INIT);
@@ -485,11 +515,16 @@ export default function App() {
     const p = parseFloat(precio);
     const sol = solicitudes.find(s=>s.id===solId); if (!sol) return;
     const fid = String(perfil.id);
-    const label = sol.tipo==="mudanza" ? `${formatUYU(p)}/hora` : `${formatUYU(p)} total`;
-    const ofertasFletyer = {...(sol.ofertasFletyer||{}), [fid]:{precio:p,nombre:perfil.nombre,bloqueado:false}};
+    const hMin = sol.tipo==="mudanza" ? (horasMin[solId]||1) : null;
+    const costoMin = sol.tipo==="mudanza" ? Math.round(p*hMin) : p;
+    const label = sol.tipo==="mudanza"
+      ? `${formatUYU(p)}/hora · mínimo ${hMin}h (${formatUYU(costoMin)} mínimo)`
+      : `${formatUYU(p)} total`;
+    const ofertasFletyer = {...(sol.ofertasFletyer||{}), [fid]:{precio:p, horasMin:hMin, nombre:perfil.nombre, bloqueado:false}};
     const chats = {...(sol.chats||{})};
     if (!chats[fid]||chats[fid].length===0) chats[fid]=[{de:"fletyer",fletyerId:fid,fletyerNombre:perfil.nombre,texto:`¡Hola! Mi precio es ${label}. ¿Te parece bien?`,hora:new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"}),esOfertaAuto:true}];
-    await updateDoc(doc(db,"solicitudes",solId),{ofertasFletyer,chats});
+    // Guardar horasMin en la solicitud para que esté disponible durante el viaje
+    await updateDoc(doc(db,"solicitudes",solId),{ofertasFletyer,chats,horasMin:hMin});
     setPI(solId,"");
   };
 
@@ -499,11 +534,15 @@ export default function App() {
     const sol = solicitudes.find(s=>s.id===solId); if (!sol) return;
     const fid = String(perfil.id);
     const oferta = sol.ofertasFletyer?.[fid]; if (!oferta||oferta.bloqueado) return;
-    const label = sol.tipo==="mudanza" ? `${formatUYU(p)}/hora` : `${formatUYU(p)} total`;
-    const ofertasFletyer = {...sol.ofertasFletyer,[fid]:{...oferta,precio:p}};
+    const hMin = sol.tipo==="mudanza" ? (horasMin[solId]||oferta.horasMin||1) : null;
+    const costoMin = sol.tipo==="mudanza" ? Math.round(p*hMin) : p;
+    const label = sol.tipo==="mudanza"
+      ? `${formatUYU(p)}/hora · mínimo ${hMin}h (${formatUYU(costoMin)} mínimo)`
+      : `${formatUYU(p)} total`;
+    const ofertasFletyer = {...sol.ofertasFletyer,[fid]:{...oferta,precio:p,horasMin:hMin}};
     const chats = {...(sol.chats||{})};
     if (chats[fid]) chats[fid] = chats[fid].map(m=>m.esOfertaAuto?{...m,texto:`¡Hola! Mi precio es ${label}. ¿Te parece bien?`}:m);
-    await updateDoc(doc(db,"solicitudes",solId),{ofertasFletyer,chats});
+    await updateDoc(doc(db,"solicitudes",solId),{ofertasFletyer,chats,horasMin:hMin});
     setPI(solId,"");
   };
 
@@ -650,7 +689,16 @@ export default function App() {
         {sol?.estado==="en_curso"&&!aceptado&&<div style={{width:"100%",background:C.danger,color:"#fff",textAlign:"center",padding:"9px",fontSize:13,fontWeight:700,boxSizing:"border-box"}}>🔒 Solicitud tomada por otro Fletyer.</div>}
         <div style={{...st.cont,flex:1,display:"flex",flexDirection:"column",maxHeight:"calc(100vh - 115px)",overflowY:"auto"}}>
           {TU!=="admin"&&<button style={{...st.btnOut(C.blue),marginBottom:8}} onClick={()=>setVerPerfil(esCliente?fl?.id:cl?.id)}>👤 Ver perfil de {esCliente?fl?.nombre:sol?.clienteNombre}</button>}
-          {oferta&&<div style={{background:sol.tipo==="mudanza"?`${C.blue}12`:`${C.cyan}12`,border:`1.5px solid ${sol.tipo==="mudanza"?C.blue:C.cyan}44`,borderRadius:12,padding:"10px 14px",marginTop:4,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:11,fontWeight:700,color:sol.tipo==="mudanza"?C.blue:C.cyan,textTransform:"uppercase"}}>💰 {sol.tipo==="mudanza"?"Precio/hora":"Precio fijo"}</div><div style={{fontSize:11,color:C.muted}}>{sol.tipo==="mudanza"?"Se cobra por tiempo real":"Precio total acordado"}</div></div><div style={{fontSize:24,fontWeight:900,color:sol.tipo==="mudanza"?C.blue:C.cyan}}>{formatUYU(oferta.precio)}{sol.tipo==="mudanza"?<span style={{fontSize:14}}>/h</span>:""}</div></div>}
+          {oferta&&<div style={{background:sol.tipo==="mudanza"?`${C.blue}12`:`${C.cyan}12`,border:`1.5px solid ${sol.tipo==="mudanza"?C.blue:C.cyan}44`,borderRadius:12,padding:"10px 14px",marginTop:4,marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:sol.tipo==="mudanza"?C.blue:C.cyan,textTransform:"uppercase"}}>💰 {sol.tipo==="mudanza"?"Precio/hora":"Precio fijo"}</div>
+                {sol.tipo==="mudanza"&&oferta.horasMin&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>Mínimo: {oferta.horasMin}h · Costo mínimo: <strong>{formatUYU(oferta.precio*oferta.horasMin)}</strong></div>}
+                {sol.tipo!=="mudanza"&&<div style={{fontSize:11,color:C.muted}}>Precio total acordado</div>}
+              </div>
+              <div style={{fontSize:24,fontWeight:900,color:sol.tipo==="mudanza"?C.blue:C.cyan}}>{formatUYU(oferta.precio)}{sol.tipo==="mudanza"?<span style={{fontSize:14}}>/h</span>:""}</div>
+            </div>
+          </div>}
           {esFletyer&&!final&&<div style={{background:`${C.blue}08`,border:`1.5px solid ${C.blue}22`,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
             <div style={{fontSize:12,fontWeight:700,color:C.blue,marginBottom:8}}>{oferta?"✏️ Modificar mi precio":"⚡ Publicar mi precio"}{bloqueado&&<span style={{marginLeft:8,background:C.warning+"22",color:C.warning,borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700}}>🔒 Bloqueado</span>}</div>
             {!bloqueado?<div style={{display:"flex",gap:8,alignItems:"center"}}><div style={{position:"relative",flex:1}}><span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span><input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontWeight:700}} placeholder={oferta?String(oferta.precio):(sol?.tipo==="mudanza"?"Precio/hora":"Precio total")} value={getPI(sol.id)} onChange={e=>setPI(sol.id,e.target.value)}/></div><button style={st.btnSm(GRAD_B)} disabled={!getPI(sol.id)||parseFloat(getPI(sol.id))<=0} onClick={()=>oferta?modificarOferta(sol.id,getPI(sol.id)):ofertarPrecio(sol.id,getPI(sol.id))}>{oferta?"Actualizar":"Publicar"}</button></div>:<div style={{fontSize:12,color:C.muted}}>No podés modificar el precio una vez aceptado.</div>}
@@ -820,13 +868,75 @@ export default function App() {
                     {!miOf?(
                       <div style={{background:`${C.warning}10`,border:`1.5px solid ${C.warning}33`,borderRadius:12,padding:"12px 14px",marginBottom:8}}>
                         <div style={{fontSize:12,fontWeight:700,color:C.warning,marginBottom:8}}>{sol.tipo==="mudanza"?"⚡ Ingresá tu precio por hora":"⚡ Ingresá tu precio total"}</div>
-                        <div style={{display:"flex",gap:8}}><div style={{position:"relative",flex:1}}><span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span><input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontWeight:700}} placeholder={sol.tipo==="mudanza"?String(estHr):String(estKm)} value={getPI(sol.id)} onChange={e=>setPI(sol.id,e.target.value)}/></div><button style={st.btnSm(GRAD_B)} disabled={!getPI(sol.id)||parseFloat(getPI(sol.id))<=0} onClick={()=>ofertarPrecio(sol.id,getPI(sol.id))}>Ofertar</button></div>
-                        <div style={{fontSize:11,color:C.muted,marginTop:5}}>Al publicar tu precio se enviará al cliente automáticamente.</div>
+                        <div style={{display:"flex",gap:8}}>
+                          <div style={{position:"relative",flex:1}}>
+                            <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span>
+                            <input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontWeight:700}} placeholder={sol.tipo==="mudanza"?String(estHr):String(estKm)} value={getPI(sol.id)} onChange={e=>setPI(sol.id,e.target.value)}/>
+                          </div>
+                          <button style={st.btnSm(GRAD_B)} disabled={!getPI(sol.id)||parseFloat(getPI(sol.id))<=0} onClick={()=>ofertarPrecio(sol.id,getPI(sol.id))}>Ofertar</button>
+                        </div>
+                        {sol.tipo==="mudanza"&&(
+                          <div style={{marginTop:10}}>
+                            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6}}>⏱ Mínimo de horas a cobrar</div>
+                            <div style={{display:"flex",gap:6,marginBottom:8}}>
+                              {[1,2,3,4,5].map(h=>(
+                                <button key={h} onClick={()=>setHorasMin(p=>({...p,[sol.id]:h}))}
+                                  style={{flex:1,padding:"7px 0",borderRadius:10,border:`2px solid ${(horasMin[sol.id]||1)===h?C.blue:"#ddd"}`,background:(horasMin[sol.id]||1)===h?C.blue+"18":"#fff",color:(horasMin[sol.id]||1)===h?C.blue:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                                  {h}h
+                                </button>
+                              ))}
+                            </div>
+                            {getPI(sol.id)&&parseFloat(getPI(sol.id))>0&&(
+                              <div style={{background:`${C.blue}10`,borderRadius:10,padding:"8px 12px",fontSize:12}}>
+                                <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                                  <span style={{color:C.muted}}>Precio/hora:</span>
+                                  <span style={{fontWeight:700,color:C.blue}}>{formatUYU(parseFloat(getPI(sol.id)))}/h</span>
+                                </div>
+                                <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                                  <span style={{color:C.muted}}>Mínimo ({horasMin[sol.id]||1}h):</span>
+                                  <span style={{fontWeight:700,color:C.blue}}>{formatUYU(parseFloat(getPI(sol.id))*(horasMin[sol.id]||1))}</span>
+                                </div>
+                                <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${C.blue}22`,paddingTop:4,marginTop:4}}>
+                                  <span style={{color:C.muted}}>Vos recibís (mínimo):</span>
+                                  <span style={{fontWeight:700,color:C.success}}>{formatUYU(Math.round(parseFloat(getPI(sol.id))*(horasMin[sol.id]||1)*(1-comisionPct/100)))}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div style={{fontSize:11,color:C.muted,marginTop:8}}>Al publicar tu precio se enviará al cliente automáticamente.</div>
                       </div>
                     ):(
                       <div style={{background:`${C.success}12`,border:`1.5px solid ${C.success}33`,borderRadius:12,padding:"10px 14px",marginBottom:8}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><span style={{fontSize:12,color:C.muted,fontWeight:700}}>✅ Tu oferta:</span><span style={{fontSize:18,fontWeight:900,color:C.success}}>{formatUYU(miOf.precio)}{sol.tipo==="mudanza"?"/h":""}</span></div>
-                        <div style={{display:"flex",gap:8,alignItems:"center"}}><div style={{position:"relative",flex:1}}><span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span><input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontSize:13}} placeholder="Nuevo precio..." value={getPI(sol.id)} onChange={e=>setPI(sol.id,e.target.value)}/></div><button style={st.btnSm(`linear-gradient(135deg,${C.warning},#e0a000)`)} disabled={!getPI(sol.id)||parseFloat(getPI(sol.id))<=0} onClick={()=>modificarOferta(sol.id,getPI(sol.id))}>Modificar</button></div>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                          <span style={{fontSize:12,color:C.muted,fontWeight:700}}>✅ Tu oferta:</span>
+                          <span style={{fontSize:18,fontWeight:900,color:C.success}}>{formatUYU(miOf.precio)}{sol.tipo==="mudanza"?"/h":""}</span>
+                        </div>
+                        {sol.tipo==="mudanza"&&miOf.horasMin&&(
+                          <div style={{fontSize:12,color:C.muted,marginBottom:6}}>
+                            Mínimo: <strong style={{color:C.blue}}>{miOf.horasMin}h</strong> · Costo mínimo: <strong style={{color:C.blue}}>{formatUYU(miOf.precio*miOf.horasMin)}</strong>
+                          </div>
+                        )}
+                        {sol.tipo==="mudanza"&&(
+                          <div style={{marginBottom:8}}>
+                            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:5}}>⏱ Modificar mínimo de horas</div>
+                            <div style={{display:"flex",gap:6}}>
+                              {[1,2,3,4,5].map(h=>(
+                                <button key={h} onClick={()=>setHorasMin(p=>({...p,[sol.id]:h}))}
+                                  style={{flex:1,padding:"6px 0",borderRadius:10,border:`2px solid ${(horasMin[sol.id]||miOf.horasMin||1)===h?C.blue:"#ddd"}`,background:(horasMin[sol.id]||miOf.horasMin||1)===h?C.blue+"18":"#fff",color:(horasMin[sol.id]||miOf.horasMin||1)===h?C.blue:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                                  {h}h
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                          <div style={{position:"relative",flex:1}}>
+                            <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span>
+                            <input type="number" min="0" style={{...st.input,marginBottom:0,paddingLeft:24,fontSize:13}} placeholder="Nuevo precio/h..." value={getPI(sol.id)} onChange={e=>setPI(sol.id,e.target.value)}/>
+                          </div>
+                          <button style={st.btnSm(`linear-gradient(135deg,${C.warning},#e0a000)`)} disabled={!getPI(sol.id)||parseFloat(getPI(sol.id))<=0} onClick={()=>modificarOferta(sol.id,getPI(sol.id))}>Modificar</button>
+                        </div>
                       </div>
                     )}
                     <button style={{...st.btn(hayChat?GRAD:GRAD_B),marginTop:2,marginBottom:0}} onClick={()=>setChatActivo({solId:sol.id,fid:String(UA.id)})}>{hayChat?"💬 Ver mi chat":"💬 Abrir chat con cliente"}</button>
