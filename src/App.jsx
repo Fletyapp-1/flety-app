@@ -868,6 +868,19 @@ export default function App() {
                     {!miOf?(
                       <div style={{background:`${C.warning}10`,border:`1.5px solid ${C.warning}33`,borderRadius:12,padding:"12px 14px",marginBottom:8}}>
                         <div style={{fontSize:12,fontWeight:700,color:C.warning,marginBottom:8}}>{sol.tipo==="mudanza"?"⚡ Ingresá tu precio por hora":"⚡ Ingresá tu precio total"}</div>
+                        {sol.tipo==="mudanza"&&(
+                          <div style={{marginBottom:10}}>
+                            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6}}>⏱ Mínimo de horas a cobrar</div>
+                            <div style={{display:"flex",gap:8}}>
+                              {[1,2,3].map(h=>(
+                                <button key={h} onClick={()=>setHorasMin(p=>({...p,[sol.id]:h}))}
+                                  style={{flex:1,padding:"9px 0",borderRadius:10,border:`2px solid ${(horasMin[sol.id]||1)===h?C.blue:"#ddd"}`,background:(horasMin[sol.id]||1)===h?C.blue:"#fff",color:(horasMin[sol.id]||1)===h?"#fff":C.muted,fontWeight:700,fontSize:14,cursor:"pointer",transition:"all 0.15s"}}>
+                                  {h}h
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <div style={{display:"flex",gap:8}}>
                           <div style={{position:"relative",flex:1}}>
                             <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontWeight:700,color:C.blue}}>$</span>
@@ -875,33 +888,16 @@ export default function App() {
                           </div>
                           <button style={st.btnSm(GRAD_B)} disabled={!getPI(sol.id)||parseFloat(getPI(sol.id))<=0} onClick={()=>ofertarPrecio(sol.id,getPI(sol.id))}>Ofertar</button>
                         </div>
-                        {sol.tipo==="mudanza"&&(
-                          <div style={{marginTop:10}}>
-                            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6}}>⏱ Mínimo de horas a cobrar</div>
-                            <div style={{display:"flex",gap:6,marginBottom:8}}>
-                              {[1,2,3,4,5].map(h=>(
-                                <button key={h} onClick={()=>setHorasMin(p=>({...p,[sol.id]:h}))}
-                                  style={{flex:1,padding:"7px 0",borderRadius:10,border:`2px solid ${(horasMin[sol.id]||1)===h?C.blue:"#ddd"}`,background:(horasMin[sol.id]||1)===h?C.blue+"18":"#fff",color:(horasMin[sol.id]||1)===h?C.blue:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}}>
-                                  {h}h
-                                </button>
-                              ))}
+                        {sol.tipo==="mudanza"&&getPI(sol.id)&&parseFloat(getPI(sol.id))>0&&(
+                          <div style={{marginTop:8,background:`${C.blue}10`,borderRadius:10,padding:"8px 12px",fontSize:12}}>
+                            <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                              <span style={{color:C.muted}}>Costo mínimo ({horasMin[sol.id]||1}h):</span>
+                              <span style={{fontWeight:700,color:C.blue}}>{formatUYU(parseFloat(getPI(sol.id))*(horasMin[sol.id]||1))}</span>
                             </div>
-                            {getPI(sol.id)&&parseFloat(getPI(sol.id))>0&&(
-                              <div style={{background:`${C.blue}10`,borderRadius:10,padding:"8px 12px",fontSize:12}}>
-                                <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                                  <span style={{color:C.muted}}>Precio/hora:</span>
-                                  <span style={{fontWeight:700,color:C.blue}}>{formatUYU(parseFloat(getPI(sol.id)))}/h</span>
-                                </div>
-                                <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                                  <span style={{color:C.muted}}>Mínimo ({horasMin[sol.id]||1}h):</span>
-                                  <span style={{fontWeight:700,color:C.blue}}>{formatUYU(parseFloat(getPI(sol.id))*(horasMin[sol.id]||1))}</span>
-                                </div>
-                                <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${C.blue}22`,paddingTop:4,marginTop:4}}>
-                                  <span style={{color:C.muted}}>Vos recibís (mínimo):</span>
-                                  <span style={{fontWeight:700,color:C.success}}>{formatUYU(Math.round(parseFloat(getPI(sol.id))*(horasMin[sol.id]||1)*(1-comisionPct/100)))}</span>
-                                </div>
-                              </div>
-                            )}
+                            <div style={{display:"flex",justifyContent:"space-between"}}>
+                              <span style={{color:C.muted}}>Vos recibís:</span>
+                              <span style={{fontWeight:700,color:C.success}}>{formatUYU(Math.round(parseFloat(getPI(sol.id))*(horasMin[sol.id]||1)*(1-comisionPct/100)))}</span>
+                            </div>
                           </div>
                         )}
                         <div style={{fontSize:11,color:C.muted,marginTop:8}}>Al publicar tu precio se enviará al cliente automáticamente.</div>
@@ -913,17 +909,17 @@ export default function App() {
                           <span style={{fontSize:18,fontWeight:900,color:C.success}}>{formatUYU(miOf.precio)}{sol.tipo==="mudanza"?"/h":""}</span>
                         </div>
                         {sol.tipo==="mudanza"&&miOf.horasMin&&(
-                          <div style={{fontSize:12,color:C.muted,marginBottom:6}}>
+                          <div style={{fontSize:12,color:C.muted,marginBottom:8}}>
                             Mínimo: <strong style={{color:C.blue}}>{miOf.horasMin}h</strong> · Costo mínimo: <strong style={{color:C.blue}}>{formatUYU(miOf.precio*miOf.horasMin)}</strong>
                           </div>
                         )}
                         {sol.tipo==="mudanza"&&(
                           <div style={{marginBottom:8}}>
-                            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:5}}>⏱ Modificar mínimo de horas</div>
-                            <div style={{display:"flex",gap:6}}>
-                              {[1,2,3,4,5].map(h=>(
+                            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:5}}>⏱ Modificar mínimo</div>
+                            <div style={{display:"flex",gap:8}}>
+                              {[1,2,3].map(h=>(
                                 <button key={h} onClick={()=>setHorasMin(p=>({...p,[sol.id]:h}))}
-                                  style={{flex:1,padding:"6px 0",borderRadius:10,border:`2px solid ${(horasMin[sol.id]||miOf.horasMin||1)===h?C.blue:"#ddd"}`,background:(horasMin[sol.id]||miOf.horasMin||1)===h?C.blue+"18":"#fff",color:(horasMin[sol.id]||miOf.horasMin||1)===h?C.blue:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                                  style={{flex:1,padding:"7px 0",borderRadius:10,border:`2px solid ${(horasMin[sol.id]||miOf.horasMin||1)===h?C.blue:"#ddd"}`,background:(horasMin[sol.id]||miOf.horasMin||1)===h?C.blue:"#fff",color:(horasMin[sol.id]||miOf.horasMin||1)===h?"#fff":C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}}>
                                   {h}h
                                 </button>
                               ))}
