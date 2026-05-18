@@ -964,9 +964,16 @@ export default function App() {
               <div style={{fontSize:13}}>📍 {sol.origen}</div><div style={{fontSize:13}}>🏁 {sol.destino}</div>
               {sol.precioFletyer&&<div style={{background:sol.tipo==="mudanza"?`${C.blue}12`:`${C.cyan}12`,borderRadius:10,padding:"8px 12px",marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:12,color:C.muted,fontWeight:700}}>{sol.tipo==="mudanza"?"💰 Tu precio/h":"💰 Precio acordado"}</span><span style={{fontSize:17,fontWeight:900,color:sol.tipo==="mudanza"?C.blue:C.cyan}}>{formatUYU(sol.precioFletyer)}{sol.tipo==="mudanza"?"/h":""}</span></div>}
               {sol.estado==="finalizado"&&<ResumenViaje sol={sol} comisionPct={comisionPct}/>}
+              {sol.estado==="en_curso"&&!sol.viajeInicio&&(
+                <div style={{background:`${C.warning}15`,border:`1.5px solid ${C.warning}55`,borderRadius:14,padding:"14px",marginTop:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.warning,marginBottom:8}}>🚦 Listo para arrancar</div>
+                  <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Presioná cuando estés en el punto de partida.</div>
+                  <button style={st.btn(`linear-gradient(135deg,${C.success},#00a87a)`)} onClick={()=>iniciarViaje(sol.id)}>🚀 Iniciar viaje</button>
+                  <button style={{...st.btnOut(C.warning),color:C.warning,marginBottom:0}} onClick={()=>cancelarViaje(sol.id)}>↩️ Cancelar trabajo</button>
+                </div>
+              )}
               {sol.estado==="en_curso"&&sol.viajeInicio&&!sol.viajeFin&&<ContadorViaje sol={sol} tipoUsuario="fletyer" onIniciar={()=>iniciarViaje(sol.id)} onFinalizar={s=>finalizarViaje(sol.id,s)}/>}
-              <button style={{...st.btn(GRAD,8),marginTop:10}} onClick={()=>setChatActivo({solId:sol.id,fid:String(UA.id)})}>💬 Chat</button>
-              {sol.estado==="en_curso"&&!sol.viajeInicio&&<button style={{...st.btnOut(C.warning),color:C.warning,marginBottom:0}} onClick={()=>cancelarViaje(sol.id)}>↩️ Cancelar trabajo</button>}
+              <button style={{...st.btn(GRAD,8),marginTop:8}} onClick={()=>setChatActivo({solId:sol.id,fid:String(UA.id)})}>💬 Chat</button>
             </div>
           );})}
         </div>
