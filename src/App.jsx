@@ -368,7 +368,7 @@ export default function App() {
   const [loginForm, setLoginForm] = useState({email:"",pass:""});
   const [loginErr, setLoginErr] = useState("");
   const [regForm, setRegForm] = useState({nombre:"",email:"",edad:"",direccion:"",telefono:"",vehiculo:"",pass:""});
-  const [nuevaSol, setNuevaSol] = useState({tipo:"mudanza",origen:"",destino:"",descripcion:""});
+  const [nuevaSol, setNuevaSol] = useState({tipo:"mudanza",origen:"",destino:"",descripcion:"",fechaSolicitada:""});
   const [aviso, setAviso] = useState(false);
   const [chatActivo, setChatActivo] = useState(null);
   const [nuevoMsg, setNuevoMsg] = useState("");
@@ -557,14 +557,14 @@ export default function App() {
     await addDoc(collection(db,"solicitudes"), {
       clienteId:perfil.id, clienteNombre:perfil.nombre, clienteTelefono:perfil.telefono||"",
       tipo:nuevaSol.tipo, origen:nuevaSol.origen, destino:nuevaSol.destino,
-      descripcion:nuevaSol.descripcion, distancia:dist,
+      descripcion:nuevaSol.descripcion, fechaSolicitada:nuevaSol.fechaSolicitada||"", distancia:dist,
       fecha:new Date().toISOString().split("T")[0], estado:"activa",
       chats:{}, ofertasFletyer:{}, fleteroAceptado:null, calificado:false,
       precioFletyer:null, viajeInicio:null, viajeFin:null, tiempoTotal:null, comisionPagada:false,
       creadoEn: serverTimestamp(),
     });
     setAviso(true); setTimeout(()=>setAviso(false),3500);
-    setNuevaSol({tipo:"mudanza",origen:"",destino:"",descripcion:""});
+    setNuevaSol({tipo:"mudanza",origen:"",destino:"",descripcion:"",fechaSolicitada:""});
     setTab("solicitudes");
   };
 
@@ -860,6 +860,32 @@ export default function App() {
             {mostrarMapa&&<MiniMapa origen={nuevaSol.origen} destino={nuevaSol.destino}/>}
             <label style={st.label}>📝 Descripción</label>
             <textarea style={st.textarea} placeholder={nuevaSol.tipo==="mudanza"?"Ej: 2 ambientes, heladera...":"Ej: 3 cajas medianas..."} value={nuevaSol.descripcion} onChange={e=>setNuevaSol(p=>({...p,descripcion:e.target.value}))}/>
+            <label style={st.label}>📅 Fecha tentativa de ejecución</label>
+            <div style={{display:"flex",gap:8,marginBottom:11}}>
+              {[...Array(7)].map((_,i)=>{
+                const d = new Date(); d.setDate(d.getDate()+i);
+                const val = d.toISOString().split("T")[0];
+                const dia = d.toLocaleDateString("es-UY",{weekday:"short"}).replace(".","");
+                const num = d.getDate();
+                const mes = d.toLocaleDateString("es-UY",{month:"short"}).replace(".","");
+                const esHoy = i===0;
+                const sel = nuevaSol.fechaSolicitada===val;
+                return(
+                  <button key={val} onClick={()=>setNuevaSol(p=>({...p,fechaSolicitada:val}))}
+                    style={{flex:1,padding:"8px 4px",borderRadius:12,border:`2px solid ${sel?C.cyan:"#ddd"}`,background:sel?C.cyan:"#fff",color:sel?"#fff":C.text,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                    <span style={{fontSize:10,fontWeight:700,color:sel?"rgba(255,255,255,0.85)":C.muted,textTransform:"capitalize"}}>{esHoy?"Hoy":dia}</span>
+                    <span style={{fontSize:16,fontWeight:900}}>{num}</span>
+                    <span style={{fontSize:10,color:sel?"rgba(255,255,255,0.85)":C.muted,textTransform:"capitalize"}}>{mes}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {nuevaSol.fechaSolicitada&&(
+              <div style={{background:`${C.cyan}12`,borderRadius:10,padding:"8px 12px",marginBottom:11,fontSize:12,color:C.blue,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span>📅 Fecha seleccionada: <strong>{new Date(nuevaSol.fechaSolicitada+"T12:00:00").toLocaleDateString("es-UY",{weekday:"long",day:"numeric",month:"long"})}</strong></span>
+                <button onClick={()=>setNuevaSol(p=>({...p,fechaSolicitada:""}))} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>
+              </div>
+            )}
             <button style={st.btn(GRAD)} onClick={publicarSolicitud}>🚀 Publicar Solicitud</button>
           </div>
         </div>
@@ -913,6 +939,7 @@ export default function App() {
               <MiniMapa origen={sol.origen} destino={sol.destino}/>
               <div style={{fontSize:13}}>📍 {sol.origen}</div><div style={{fontSize:13}}>🏁 {sol.destino}</div>
               {sol.descripcion&&<div style={{fontSize:12,color:C.muted,marginTop:4,fontStyle:"italic"}}>"{sol.descripcion}"</div>}
+              {sol.fechaSolicitada&&<div style={{fontSize:12,color:C.blue,marginTop:4,fontWeight:600}}>📅 Fecha solicitada: {new Date(sol.fechaSolicitada+"T12:00:00").toLocaleDateString("es-UY",{weekday:"long",day:"numeric",month:"long"})}</div>}
               {sol.estado==="finalizado"&&<ResumenViaje sol={sol} comisionPct={comisionPct} mostrarComision={false}/>}
               {sol.estado==="en_curso"&&sol.viajeInicio&&!sol.viajeFin&&<ContadorViaje sol={sol} tipoUsuario="cliente" onIniciar={null} onFinalizar={null}/>}
               <div style={{fontSize:12,color:C.muted,marginTop:6}}>💬 {chatsKeys.length} Fletyer(s) contactaron</div>
@@ -984,6 +1011,7 @@ export default function App() {
                     <MiniMapa origen={sol.origen} destino={sol.destino}/>
                     <div style={{fontSize:13}}>📍 {sol.origen}</div><div style={{fontSize:13}}>🏁 {sol.destino}</div>
                     {sol.descripcion&&<div style={{fontSize:12,color:C.muted,marginTop:4,fontStyle:"italic"}}>"{sol.descripcion}"</div>}
+                    {sol.fechaSolicitada&&<div style={{fontSize:12,color:C.blue,marginTop:4,fontWeight:600}}>📅 Fecha solicitada: {new Date(sol.fechaSolicitada+"T12:00:00").toLocaleDateString("es-UY",{weekday:"long",day:"numeric",month:"long"})}</div>}
                     <div style={{fontSize:12,marginTop:4}}>📞 {sol.clienteTelefono}</div>
                     <div style={{background:`${C.blue}09`,borderRadius:10,padding:"8px 12px",marginTop:8,marginBottom:8}}>
                       <div style={{fontSize:11,color:C.blue,fontWeight:700,marginBottom:4}}>📊 Tu referencia ({tarifa.icon} {tarifa.label})</div>
