@@ -377,7 +377,10 @@ export default function App() {
   const [verPerfil, setVerPerfil] = useState(null);
   const [modalCal, setModalCal] = useState(null);
   const [precioEdit, setPrecioEdit] = useState({});
-  const [horasMin, setHorasMin] = useState({}); // horas mínimas por solId
+  const [horasMin, setHorasMin] = useState({});
+  const [notifs, setNotifs] = useState([]); // toasts [{id, texto, tipo, icono}]
+  const [leidos, setLeidos] = useState({}); // {solId: {fid: cantMensajesLeidos}}
+  const solAnterior = useRef([]); // para detectar cambios // horas mínimas por solId
   const [editTar, setEditTar] = useState(false);
   const [tarEdit, setTarEdit] = useState({});
   const [comEdit, setComEdit] = useState(COMISION_INIT);
@@ -389,6 +392,71 @@ export default function App() {
 
   const getPI = id => precioEdit[id] ?? "";
   const setPI = (id,v) => setPrecioEdit(p=>({...p,[id]:v}));
+
+  // ── Toast notifications ──
+  const toast = (texto, icono="🔔", tipo="info") => {
+    const id = Date.now() + Math.random();
+    setNotifs(p=>[...p,{id,texto,icono,tipo}]);
+    setTimeout(()=>setNotifs(p=>p.filter(n=>n.id!==id)), 5000);
+  };
+
+  // ── Detectar cambios en solicitudes y notificar ──
+  useEffect(()=>{
+    if (!perfil || !solicitudes.length) { solAnterior.current = solicitudes; return; }
+    const prev = solAnterior.current;
+    if (!prev.length) { solAnterior.current = solicitudes; return; }
+
+    solicitudes.forEach(sol => {
+      const ant = prev.find(s=>s.id===sol.id);
+      if (!ant) return;
+
+      // ── CLIENTE: nuevas ofertas de fletyers ──
+      if (perfil.tipo==="cliente" && sol.clienteId===perfil.id) {
+        const ofertasNuevas = Object.keys(sol.ofertasFletyer||{}).filter(fid=>!Object.keys(ant.ofertasFletyer||{}).includes(fid));
+        ofertasNuevas.forEach(fid=>{
+          const fl = usuarios.find(u=>u.id===fid);
+          const oferta = sol.ofertasFletyer[fid];
+          toast(`${fl?.nombre||"Un Fletyer"} ofertó ${formatUYU(oferta.precio)}${sol.tipo==="mudanza"?"/h":" total"}`, "💰", "oferta");
+        });
+        // Nuevo mensaje de fletyer en chat
+        Object.keys(sol.chats||{}).forEach(fid=>{
+          const msgsNuevos = (sol.chats[fid]||[]).length - ((ant.chats?.[fid]||[]).length);
+          if (msgsNuevos > 0 && sol.chats[fid].slice(-1)[0]?.de==="fletyer") {
+            const fl = usuarios.find(u=>u.id===fid);
+            toast(`Mensaje de ${fl?.nombre||"Fletyer"}: "${sol.chats[fid].slice(-1)[0].texto.slice(0,40)}..."`, "💬", "mensaje");
+          }
+        });
+        // Fletyer inició el viaje
+        if (!ant.viajeInicio && sol.viajeInicio) toast("¡El Fletyer inició el viaje! El contador está corriendo. 🚀", "🚀", "viaje");
+        // Viaje finalizado
+        if (ant.estado!=="finalizado" && sol.estado==="finalizado") toast("Viaje finalizado. ¡Podés calificar al Fletyer! ⭐", "✅", "fin");
+      }
+
+      // ── FLETYER: aceptación de oferta ──
+      if (perfil.tipo==="fletyer" && sol.fleteroAceptado===perfil.id) {
+        if (!ant.fleteroAceptado) toast(`¡${sol.clienteNombre} aceptó tu oferta! El trabajo es tuyo. 🎉`, "🎉", "aceptado");
+        // Nuevo mensaje del cliente
+        const misChats = sol.chats?.[perfil.id]||[];
+        const antChats = ant.chats?.[perfil.id]||[];
+        if (misChats.length > antChats.length && misChats.slice(-1)[0]?.de==="cliente") {
+          toast(`Mensaje de ${sol.clienteNombre}: "${misChats.slice(-1)[0].texto.slice(0,40)}..."`, "💬", "mensaje");
+        }
+      }
+
+      // ── FLETYER: nueva solicitud disponible ──
+      if (perfil.tipo==="fletyer" && !ant && sol.estado==="activa") {
+        toast("Nueva solicitud disponible", "📋", "nueva");
+      }
+    });
+
+    // Nueva solicitud creada (aparece en la lista por primera vez)
+    if (perfil.tipo==="fletyer") {
+      const nuevas = solicitudes.filter(s=>s.estado==="activa"&&!prev.find(p=>p.id===s.id));
+      if (nuevas.length > 0) toast(`Nueva solicitud disponible: ${nuevas[0].tipo==="mudanza"?"🏠 Mudanza":"📦 Flete"}`, "📋", "nueva");
+    }
+
+    solAnterior.current = solicitudes;
+  }, [solicitudes]);
 
   // ── Auth ──
   useEffect(() => {
@@ -588,35 +656,91 @@ export default function App() {
 
   const eLabel = e => ({activa:{label:"● Activa",col:C.cyan},en_curso:{label:"🔄 En curso",col:C.warning},finalizado:{label:"✅ Finalizado",col:C.success}}[e]||{label:e,col:C.muted});
 
-  // ─── TAB BAR ────────────────────────────────────────────────────────────
+  // ─── BADGE con conteo real ────────────────────────────────────────────────
   const badge = (() => {
     if (!perfil) return 0;
-    if (perfil.tipo==="cliente") return solicitudes.filter(s=>s.clienteId===perfil.id&&Object.keys(s.ofertasFletyer||{}).length>0).length;
-    if (perfil.tipo==="fletyer") return solicitudes.filter(s=>s.estado==="en_curso"&&s.fleteroAceptado===perfil.id&&(s.chats?.[perfil.id]||[]).some(m=>m.de==="cliente")).length;
+    if (perfil.tipo==="cliente") {
+      return solicitudes.filter(s=>s.clienteId===perfil.id).reduce((total, sol)=>{
+        // Mensajes no leídos de fletyers
+        let count = 0;
+        Object.keys(sol.chats||{}).forEach(fid=>{
+          const msgs = sol.chats[fid]||[];
+          const leido = leidos[sol.id]?.[fid] || 0;
+          count += msgs.filter((m,i)=>i>=leido && m.de==="fletyer").length;
+        });
+        // Nuevas ofertas no vistas
+        const nOfertas = Object.keys(sol.ofertasFletyer||{}).length;
+        if (nOfertas > 0 && !leidos[sol.id]?._ofertas) count += nOfertas;
+        return total + (count > 0 ? 1 : 0);
+      }, 0);
+    }
+    if (perfil.tipo==="fletyer") {
+      return solicitudes.filter(s=>s.fleteroAceptado===perfil.id).reduce((total, sol)=>{
+        const msgs = sol.chats?.[perfil.id]||[];
+        const leido = leidos[sol.id]?.[perfil.id] || 0;
+        const noLeidos = msgs.filter((m,i)=>i>=leido && m.de==="cliente").length;
+        // También contar si fue aceptado recientemente
+        return total + (noLeidos > 0 ? 1 : 0);
+      }, 0);
+    }
     return 0;
   })();
 
+  // ─── TAB BAR ────────────────────────────────────────────────────────────
   const TabBar = () => {
     const tipo = perfil?.tipo;
     const tabs = tipo==="admin"?[{id:"admin-sols",icon:"📋",label:"Solicitudes"},{id:"admin-users",icon:"👥",label:"Usuarios"},{id:"admin-config",icon:"⚙️",label:"Config"}]:tipo==="cliente"?[{id:"inicio",icon:"🏠",label:"Inicio"},{id:"solicitudes",icon:"📋",label:"Solicitudes"},{id:"cuenta",icon:"👤",label:"Mi Cuenta"}]:[{id:"inicio",icon:"🔍",label:"Disponibles"},{id:"solicitudes",icon:"📋",label:"Mis Trabajos"},{id:"cuenta",icon:"👤",label:"Mi Cuenta"}];
     return <div style={st.tabBar}>{tabs.map(t=><button key={t.id} style={st.tabBtn(tab===t.id)} onClick={()=>{setTab(t.id);setChatActivo(null);}}><div style={{position:"relative"}}><span style={{fontSize:20}}>{t.icon}</span>{t.id==="solicitudes"&&badge>0&&<span style={{position:"absolute",top:-4,right:-8,background:C.danger,color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{badge}</span>}</div><span>{t.label}</span></button>)}</div>;
   };
 
+  // ─── MARCAR LEÍDO al abrir chat ───────────────────────────────────────────
+  const abrirChat = (solId, fid) => {
+    const sol = solicitudes.find(s=>s.id===solId);
+    if (sol) {
+      const msgs = sol.chats?.[fid]||[];
+      setLeidos(p=>({...p,[solId]:{...(p[solId]||{}),[fid]:msgs.length,_ofertas:true}}));
+    }
+    setChatActivo({solId, fid});
+  };
+
+  // ─── TOASTS UI ────────────────────────────────────────────────────────────
+  const colToast = {oferta:C.cyan, mensaje:C.blue, viaje:C.success, fin:C.success, aceptado:"#9B59B6", nueva:C.warning, info:C.muted};
+  const ToastContainer = () => (
+    <div style={{position:"fixed",top:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,zIndex:500,pointerEvents:"none",padding:"8px 12px",display:"flex",flexDirection:"column",gap:8}}>
+      {notifs.map(n=>(
+        <div key={n.id} style={{background:"#1A2340",color:"#fff",borderRadius:14,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 4px 20px rgba(0,0,0,0.35)",borderLeft:`4px solid ${colToast[n.tipo]||C.cyan}`,pointerEvents:"all",animation:"slideDown 0.3s ease"}}>
+          <span style={{fontSize:22,flexShrink:0}}>{n.icono}</span>
+          <span style={{fontSize:13,lineHeight:1.4,flex:1}}>{n.texto}</span>
+          <button onClick={()=>setNotifs(p=>p.filter(x=>x.id!==n.id))} style={{background:"none",border:"none",color:"rgba(255,255,255,0.5)",fontSize:18,cursor:"pointer",flexShrink:0,lineHeight:1}}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+
   // ─── ESTADOS GLOBALES ────────────────────────────────────────────────────
   if (fbUser === undefined) return <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}><LogoSVG/><div style={{fontSize:14,color:C.muted}}>Iniciando FLETY...</div></div>;
 
-  if (verPerfil) return <PerfilUsuario u={usuarios.find(u=>u.id===verPerfil)||verPerfil} onClose={()=>setVerPerfil(null)}/>;
+  // CSS animación toast
+  if (!document.getElementById("flety-anim")) {
+    const s = document.createElement("style");
+    s.id = "flety-anim";
+    s.innerHTML = `@keyframes slideDown{from{opacity:0;transform:translateY(-16px)}to{opacity:1;transform:translateY(0)}}`;
+    document.head.appendChild(s);
+  }
+
+  if (verPerfil) return <><ToastContainer/><PerfilUsuario u={usuarios.find(u=>u.id===verPerfil)||verPerfil} onClose={()=>setVerPerfil(null)}/></>;
 
   if (modalCal) {
     const fl = usuarios.find(u=>u.id===String(modalCal.fid));
     if (!fl) { setTimeout(()=>setModalCal(null),0); return null; }
-    return <ModalCalificar fletyer={fl} onCalificar={(e,c)=>calificar(modalCal.solId,modalCal.fid,e,c)} onCerrar={()=>setModalCal(null)}/>;
+    return <><ToastContainer/><ModalCalificar fletyer={fl} onCalificar={(e,c)=>calificar(modalCal.solId,modalCal.fid,e,c)} onCerrar={()=>setModalCal(null)}/></>;
   }
 
   // ═══ SIN LOGIN ════════════════════════════════════════════════════════════
   if (!fbUser || !perfil) {
     if (!modo) return (
       <div style={{...st.wrap,paddingBottom:0}}>
+        <ToastContainer/>
         <div style={{width:"100%",background:GRAD,minHeight:"42vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"48px 24px 36px",boxSizing:"border-box"}}>
           <LogoSVG size={100}/>
           <div style={{fontSize:13,color:"#fff",opacity:0.9,marginTop:8,textAlign:"center"}}>Conectamos Fletyers con clientes en Uruguay</div>
@@ -637,7 +761,7 @@ export default function App() {
     const tipo = modo.replace("-login","").replace("-registro","");
     const esLogin = modo.endsWith("-login");
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><button onClick={()=>{setModo(null);setLoginErr("");}} style={{background:"none",border:"none",color:"#fff",fontSize:20,cursor:"pointer"}}>←</button><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>FLETY</span></div><div/></div>
         <div style={st.cont}>
           <div style={st.card}>
@@ -684,6 +808,7 @@ export default function App() {
 
     return (
       <div style={{...st.wrap,paddingBottom:0}}>
+        <ToastContainer/>
         <div style={st.header}><button onClick={()=>setChatActivo(null)} style={{background:"none",border:"none",color:"#fff",fontSize:20,cursor:"pointer"}}>←</button><div style={{textAlign:"center"}}><div style={{fontWeight:700,fontSize:14}}>{TU==="admin"?`${sol?.clienteNombre} ↔ ${fl?.nombre}`:esCliente?`🚚 ${fl?.nombre}`:`🏠 ${sol?.clienteNombre}`}</div><div style={{fontSize:11,opacity:0.85}}>{sol?.origen} → {sol?.destino}</div></div><div/></div>
         {final&&<div style={{width:"100%",background:C.success,color:"#fff",textAlign:"center",padding:"9px",fontSize:13,fontWeight:700,boxSizing:"border-box"}}>✅ Viaje finalizado. ¡Gracias por usar FLETY!</div>}
         {sol?.estado==="en_curso"&&!aceptado&&<div style={{width:"100%",background:C.danger,color:"#fff",textAlign:"center",padding:"9px",fontSize:13,fontWeight:700,boxSizing:"border-box"}}>🔒 Solicitud tomada por otro Fletyer.</div>}
@@ -724,7 +849,7 @@ export default function App() {
   if (tab==="nueva-sol") {
     const mostrarMapa = nuevaSol.origen.length>4 && nuevaSol.destino.length>4;
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><button onClick={()=>setTab("inicio")} style={{background:"none",border:"none",color:"#fff",fontSize:20,cursor:"pointer"}}>←</button><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>Nueva Solicitud</span></div><div/></div>
         <div style={st.cont}>
           <div style={st.card}>
@@ -746,7 +871,7 @@ export default function App() {
   if (tab==="inicio" && TU==="cliente") {
     const misSols = solicitudes.filter(s=>s.clienteId===UA.id);
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>FLETY</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
           {aviso&&<div style={{background:C.success,color:"#fff",padding:"12px 16px",borderRadius:14,marginBottom:14,fontWeight:700,textAlign:"center"}}>✅ ¡Solicitud publicada!</div>}
@@ -771,7 +896,7 @@ export default function App() {
   if (tab==="solicitudes" && TU==="cliente") {
     const misSols = solicitudes.filter(s=>s.clienteId===UA.id);
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>FLETY</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
           <div style={{fontSize:16,fontWeight:800,marginBottom:10}}>Mis solicitudes ({misSols.length})</div>
@@ -802,7 +927,7 @@ export default function App() {
                     {of&&<div style={{fontSize:13,fontWeight:800,color:sol.tipo==="mudanza"?C.blue:C.cyan}}>{formatUYU(of.precio)}{sol.tipo==="mudanza"?"/h":""}</div>}
                   </div>
                   {acept&&<span style={st.tag(C.success)}>✅</span>}
-                  <button style={{...st.btn(acept?C.success:GRAD,0),width:"auto",padding:"6px 14px",fontSize:12}} onClick={()=>setChatActivo({solId:sol.id,fid})}>Chat</button>
+                  <button style={{...st.btn(acept?C.success:GRAD,0),width:"auto",padding:"6px 14px",fontSize:12}} onClick={()=>abrirChat(sol.id,fid)}>Chat</button>
                 </div>
               );})}
             </div>
@@ -821,7 +946,7 @@ export default function App() {
     const habilitado = uReal.habilitado===true;
     const activas = solicitudes.filter(s=>s.estado==="activa");
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>FLETY</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
           <div style={{...st.card,background:GRAD_B,marginBottom:14}}>
@@ -935,7 +1060,7 @@ export default function App() {
                         </div>
                       </div>
                     )}
-                    <button style={{...st.btn(hayChat?GRAD:GRAD_B),marginTop:2,marginBottom:0}} onClick={()=>setChatActivo({solId:sol.id,fid:String(UA.id)})}>{hayChat?"💬 Ver mi chat":"💬 Abrir chat con cliente"}</button>
+                    <button style={{...st.btn(hayChat?GRAD:GRAD_B),marginTop:2,marginBottom:0}} onClick={()=>abrirChat(sol.id,String(UA.id))}>{hayChat?"💬 Ver mi chat":"💬 Abrir chat con cliente"}</button>
                   </div>
                 );
               })}
@@ -951,7 +1076,7 @@ export default function App() {
   if (tab==="solicitudes" && TU==="fletyer") {
     const misTrab = solicitudes.filter(s=>(s.estado==="en_curso"||s.estado==="finalizado")&&s.fleteroAceptado===UA.id);
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>FLETY</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
           <div style={{fontSize:16,fontWeight:800,marginBottom:10}}>Mis trabajos</div>
@@ -973,7 +1098,7 @@ export default function App() {
                 </div>
               )}
               {sol.estado==="en_curso"&&sol.viajeInicio&&!sol.viajeFin&&<ContadorViaje sol={sol} tipoUsuario="fletyer" onIniciar={()=>iniciarViaje(sol.id)} onFinalizar={s=>finalizarViaje(sol.id,s)}/>}
-              <button style={{...st.btn(GRAD,8),marginTop:8}} onClick={()=>setChatActivo({solId:sol.id,fid:String(UA.id)})}>💬 Chat</button>
+              <button style={{...st.btn(GRAD,8),marginTop:8}} onClick={()=>abrirChat(sol.id,String(UA.id))}>💬 Chat</button>
             </div>
           );})}
         </div>
@@ -993,7 +1118,7 @@ export default function App() {
     const totalB = finalizados.reduce((a,s)=>a+costoViaje(s),0);
     const totalC = finalizados.reduce((a,s)=>a+Math.round(costoViaje(s)*(comisionPct/100)),0);
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>FLETY</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
           <div style={{...st.card,background:GRAD,borderRadius:"18px 18px 0 0",padding:"28px 18px 20px",marginBottom:0}}>
@@ -1054,7 +1179,7 @@ export default function App() {
     const fins = solicitudes.filter(s=>s.estado==="finalizado");
     const pendiente = fins.filter(s=>!s.comisionPagada).reduce((a,s)=>a+Math.round(costoViaje(s)*(comisionPct/100)),0);
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>Admin</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
           <div style={{display:"flex",gap:10,marginBottom:14}}>{[{l:"Solicitudes",v:solicitudes.length,c:C.cyan},{l:"Clientes",v:usuarios.filter(u=>u.tipo==="cliente").length,c:C.blue},{l:"Fletyers",v:usuarios.filter(u=>u.tipo==="fletyer").length,c:C.blue}].map(x=><div key={x.l} style={{...st.card,flex:1,textAlign:"center",marginBottom:0,padding:14}}><div style={{fontSize:22,fontWeight:800,color:x.c}}>{x.v}</div><div style={{fontSize:11,color:C.muted}}>{x.l}</div></div>)}</div>
@@ -1063,7 +1188,7 @@ export default function App() {
             <div style={{display:"flex",justifyContent:"space-between",paddingTop:8,borderTop:`1px solid ${C.cyan}22`}}><span style={{fontWeight:700}}>Total pendiente:</span><span style={{fontSize:18,fontWeight:900,color:C.danger}}>{formatUYU(pendiente)}</span></div>
           </div>}
           <div style={{fontSize:14,fontWeight:700,marginBottom:10}}>📋 Todas las solicitudes</div>
-          {solicitudes.map(sol=>{const e=eLabel(sol.estado);const c=costoViaje(sol);const com=Math.round(c*(comisionPct/100));return<div key={sol.id} style={st.card}><div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={st.tag(sol.tipo==="flete"?C.blue:C.cyan)}>{sol.tipo==="flete"?"📦 Flete":"🏠 Mudanza"}</span><span style={st.tag(e.col)}>{e.label}</span></div><div style={{fontSize:13,fontWeight:700}}>{sol.clienteNombre}</div><div style={{fontSize:12,color:C.muted}}>{sol.origen} → {sol.destino}</div>{c>0&&<div style={{display:"flex",gap:8,marginTop:8}}><div style={{flex:1,background:`${C.cyan}12`,borderRadius:10,padding:"6px",textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Costo</div><div style={{fontSize:14,fontWeight:800,color:C.cyan}}>{formatUYU(c)}</div></div><div style={{flex:1,background:`${C.success}12`,borderRadius:10,padding:"6px",textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Comisión</div><div style={{fontSize:14,fontWeight:800,color:C.success}}>{formatUYU(com)}</div></div></div>}{Object.keys(sol.chats||{}).map(fid=>{const fl=usuarios.find(u=>u.id===fid);return<div key={fid} style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}><span style={{fontSize:13}}>🚚 {fl?.nombre}</span><span style={{fontSize:12,color:C.muted}}>({(sol.chats[fid]||[]).length} msgs)</span><button style={{...st.btnSm(GRAD),marginLeft:"auto"}} onClick={()=>setChatActivo({solId:sol.id,fid})}>Ver</button></div>;})} {Object.keys(sol.chats||{}).length===0&&<div style={{fontSize:12,color:C.muted,marginTop:6}}>Sin chats aún.</div>}</div>;})}
+          {solicitudes.map(sol=>{const e=eLabel(sol.estado);const c=costoViaje(sol);const com=Math.round(c*(comisionPct/100));return<div key={sol.id} style={st.card}><div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={st.tag(sol.tipo==="flete"?C.blue:C.cyan)}>{sol.tipo==="flete"?"📦 Flete":"🏠 Mudanza"}</span><span style={st.tag(e.col)}>{e.label}</span></div><div style={{fontSize:13,fontWeight:700}}>{sol.clienteNombre}</div><div style={{fontSize:12,color:C.muted}}>{sol.origen} → {sol.destino}</div>{c>0&&<div style={{display:"flex",gap:8,marginTop:8}}><div style={{flex:1,background:`${C.cyan}12`,borderRadius:10,padding:"6px",textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Costo</div><div style={{fontSize:14,fontWeight:800,color:C.cyan}}>{formatUYU(c)}</div></div><div style={{flex:1,background:`${C.success}12`,borderRadius:10,padding:"6px",textAlign:"center"}}><div style={{fontSize:10,color:C.muted}}>Comisión</div><div style={{fontSize:14,fontWeight:800,color:C.success}}>{formatUYU(com)}</div></div></div>}{Object.keys(sol.chats||{}).map(fid=>{const fl=usuarios.find(u=>u.id===fid);return<div key={fid} style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}><span style={{fontSize:13}}>🚚 {fl?.nombre}</span><span style={{fontSize:12,color:C.muted}}>({(sol.chats[fid]||[]).length} msgs)</span><button style={{...st.btnSm(GRAD),marginLeft:"auto"}} onClick={()=>abrirChat(sol.id,fid)}>Ver</button></div>;})} {Object.keys(sol.chats||{}).length===0&&<div style={{fontSize:12,color:C.muted,marginTop:6}}>Sin chats aún.</div>}</div>;})}
         </div>
         <TabBar/>
       </div>
@@ -1073,7 +1198,7 @@ export default function App() {
   // ─── ADMIN USUARIOS ───────────────────────────────────────────────────
   if (tab==="admin-users") {
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>Admin</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
           {usuarios.filter(u=>u.tipo!=="admin").map(u=>{
@@ -1116,7 +1241,7 @@ export default function App() {
   // ─── ADMIN CONFIG ─────────────────────────────────────────────────────
   if (tab==="admin-config") {
     return (
-      <div style={st.wrap}>
+      <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>Config</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
           <div style={st.card}>
