@@ -80,7 +80,7 @@ const st = {
   textarea: { width:"100%", padding:"11px 13px", borderRadius:12, border:`1.5px solid ${C.cyan}44`, fontSize:14, marginBottom:11, boxSizing:"border-box", minHeight:80, resize:"vertical", outline:"none", background:"#F7FEFE" },
   label: { fontSize:11, color:C.muted, marginBottom:4, display:"block", fontWeight:700, textTransform:"uppercase", letterSpacing:0.5 },
   tag: (col=C.cyan) => ({ background:col+"22", color:col, borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:700, display:"inline-block" }),
-  tabBar: { position:"fixed", bottom:0, left:0, right:0, background:"#fff", borderTop:`2px solid ${C.cyan}33`, display:"flex", justifyContent:"space-around", padding:"6px 0 10px", zIndex:100, boxShadow:"0 -2px 12px rgba(0,180,180,0.10)" },
+  tabBar: { position:"fixed", bottom:0, left:0, right:0, background:"#fff", borderTop:`2px solid ${C.cyan}33`, display:"flex", justifyContent:"space-around", padding:"6px 0 10px", zIndex:1000, boxShadow:"0 -2px 12px rgba(0,180,180,0.10)" },
   tabBtn: (a) => ({ flex:1, background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:2, color:a?C.blue:C.muted, fontWeight:a?700:400, fontSize:10, padding:"4px 2px" }),
 };
 
@@ -155,7 +155,7 @@ function MiniMapa({origen, destino}) {
 
   if (!origen || !destino || origen.length < 5 || destino.length < 5) return null;
   return (
-    <div style={{borderRadius:14,overflow:"hidden",marginBottom:10,border:`1px solid ${C.cyan}33`}}>
+    <div style={{borderRadius:14,overflow:"hidden",marginBottom:10,border:`1px solid ${C.cyan}33`,position:"relative",zIndex:0}}>
       {loading && <div style={{height:150,background:"#E0F7F7",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:12,color:C.muted}}>🗺️ Cargando mapa...</span></div>}
       {!loading && <div ref={mapRef} id={mapId.current} style={{height:175,width:"100%"}}/>}
       {dist !== null && !loading && <div style={{display:"flex",justifyContent:"space-between",padding:"6px 12px",fontSize:12,color:C.muted,background:"#F0FAFA"}}><span><b style={{color:C.success}}>A</b> {origen.slice(0,24)}</span><b style={{color:C.blue}}>📍 {dist} km</b></div>}
@@ -348,6 +348,69 @@ function ModalCalificar({fletyer, onCalificar, onCerrar}) {
         <textarea style={st.textarea} placeholder="Comentario (opcional)..." value={com} onChange={e=>setCom(e.target.value)}/>
         <button style={st.btn(GRAD)} disabled={!est} onClick={()=>onCalificar(est,com)}>{est?`Enviar (${est}★)`:"Seleccioná una puntuación"}</button>
         <button style={st.btnOut(C.muted)} onClick={onCerrar}>Ahora no</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── CUENTA ACCESO: email + cambio de contraseña ─────────────────────────
+function CuentaAcceso({perfil}) {
+  const [editando, setEditando] = useState(null); // null | "pass"
+  const [nuevaPass, setNuevaPass] = useState("");
+  const [passActual, setPassActual] = useState("");
+  const [msg, setMsg] = useState(null); // {texto, ok}
+  const [loading, setLoading] = useState(false);
+
+  const cambiarPass = async () => {
+    if (nuevaPass.length < 6) { setMsg({texto:"La contraseña debe tener al menos 6 caracteres",ok:false}); return; }
+    setLoading(true);
+    try {
+      const { EmailAuthProvider, reauthenticateWithCredential, updatePassword } = await import("firebase/auth");
+      const credential = EmailAuthProvider.credential(perfil.email, passActual);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      await updatePassword(auth.currentUser, nuevaPass);
+      setMsg({texto:"✅ Contraseña actualizada correctamente",ok:true});
+      setEditando(null); setNuevaPass(""); setPassActual("");
+    } catch(e) {
+      if (e.code==="auth/wrong-password"||e.code==="auth/invalid-credential") setMsg({texto:"❌ La contraseña actual es incorrecta",ok:false});
+      else setMsg({texto:"❌ Error: "+e.message,ok:false});
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{background:"#fff",borderRadius:18,padding:18,marginBottom:14,boxShadow:"0 3px 16px rgba(0,180,180,0.10)"}}>
+      <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>🔐 Acceso a la cuenta</div>
+      {/* Email */}
+      <div style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}>
+        <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Email</div>
+        <div style={{fontSize:14,fontWeight:600,color:C.text}}>{perfil.email||"—"}</div>
+      </div>
+      {/* Contraseña */}
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:editando==="pass"?10:0}}>
+          <div>
+            <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Contraseña</div>
+            <div style={{fontSize:18,letterSpacing:3,color:C.muted}}>••••••••</div>
+          </div>
+          {editando!=="pass"
+            ? <button onClick={()=>{setEditando("pass");setMsg(null);}} style={{...{background:"transparent",color:C.blue,border:`1.5px solid ${C.blue}`,borderRadius:10,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}}>Cambiar</button>
+            : <button onClick={()=>{setEditando(null);setMsg(null);setNuevaPass("");setPassActual("");}} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer"}}>×</button>
+          }
+        </div>
+        {editando==="pass"&&(
+          <div>
+            <label style={{fontSize:11,color:C.muted,marginBottom:4,display:"block",fontWeight:700,textTransform:"uppercase"}}>Contraseña actual</label>
+            <input type="password" style={{width:"100%",padding:"11px 13px",borderRadius:12,border:`1.5px solid ${C.cyan}44`,fontSize:14,marginBottom:10,boxSizing:"border-box",outline:"none",background:"#F7FEFE"}} placeholder="••••••" value={passActual} onChange={e=>setPassActual(e.target.value)}/>
+            <label style={{fontSize:11,color:C.muted,marginBottom:4,display:"block",fontWeight:700,textTransform:"uppercase"}}>Nueva contraseña (mín. 6 caracteres)</label>
+            <input type="password" style={{width:"100%",padding:"11px 13px",borderRadius:12,border:`1.5px solid ${C.cyan}44`,fontSize:14,marginBottom:10,boxSizing:"border-box",outline:"none",background:"#F7FEFE"}} placeholder="••••••" value={nuevaPass} onChange={e=>setNuevaPass(e.target.value)}/>
+            {msg&&<div style={{fontSize:13,marginBottom:8,color:msg.ok?C.success:C.danger}}>{msg.texto}</div>}
+            <button disabled={loading} onClick={cambiarPass} style={{background:GRAD,color:"#fff",border:"none",borderRadius:12,padding:"11px 0",width:"100%",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+              {loading?"Guardando...":"Guardar nueva contraseña"}
+            </button>
+          </div>
+        )}
+        {msg&&editando!=="pass"&&<div style={{fontSize:13,marginTop:8,color:msg.ok?C.success:C.danger}}>{msg.texto}</div>}
       </div>
     </div>
   );
@@ -1137,7 +1200,7 @@ export default function App() {
 
   // ─── MI CUENTA ────────────────────────────────────────────────────────
   if (tab==="cuenta") {
-    const campos = TU==="cliente"?["nombre","edad","direccion","telefono"]:["nombre","edad","direccion","telefono","vehiculo"];
+    const campos = TU==="cliente"?["nombre","edad","direccion","telefono"]:["nombre","edad","direccion","telefono","vehiculo","descripcionVehiculo"];
     const uAct = usuarios.find(u=>u.id===UA.id)||UA;
     const vKey = uAct.vehiculoKey||detectarVehiculoKey(uAct.vehiculo);
     const tarifa = TU==="fletyer" ? getTarifa(vKey,tarifas) : null;
@@ -1149,6 +1212,7 @@ export default function App() {
       <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>FLETY</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
+          {/* ── Header con avatar ── */}
           <div style={{...st.card,background:GRAD,borderRadius:"18px 18px 0 0",padding:"28px 18px 20px",marginBottom:0}}>
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
               <div style={{position:"relative"}}>
@@ -1160,11 +1224,58 @@ export default function App() {
               {TU==="fletyer"&&<div style={{display:"flex",alignItems:"center",gap:6}}><Estrellas valor={Math.round(parseFloat(promEst(uAct.calificaciones)))} size={18}/><span style={{color:"#fff",fontWeight:700,fontSize:13}}>{promEst(uAct.calificaciones)>0?`${promEst(uAct.calificaciones)} (${uAct.calificaciones?.length})`:"Sin calificaciones"}</span></div>}
             </div>
           </div>
+
+          {/* ── Datos personales ── */}
           <div style={{...st.card,borderRadius:"0 0 18px 18px",paddingTop:20}}>
-            {!editMode?(<>{campos.map(c=><div key={c} style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}><div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase"}}>{c==="vehiculo"?"Vehículo":c}</div><div style={{fontSize:15,fontWeight:600,marginTop:2}}>{uAct[c]||"—"}</div></div>)}<button style={st.btn(GRAD)} onClick={()=>{setEditData({...uAct});setEditMode(true);}}>✏️ Editar datos</button></>)
-            :(<>{campos.map(c=><div key={c}><label style={st.label}>{c==="vehiculo"?"Vehículo":c.charAt(0).toUpperCase()+c.slice(1)}</label><input style={st.input} value={editData[c]||""} onChange={e=>setEditData(p=>({...p,[c]:e.target.value}))}/></div>)}<div style={{display:"flex",gap:10}}><button style={{...st.btn(C.success),flex:1}} onClick={guardarEdicion}>Guardar</button><button style={{...st.btn(C.muted),flex:1}} onClick={()=>setEditMode(false)}>Cancelar</button></div></>)}
+            {!editMode?(<>
+              {campos.filter(c=>c!=="descripcionVehiculo").map(c=><div key={c} style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase"}}>{c==="vehiculo"?"Vehículo":c}</div>
+                <div style={{fontSize:15,fontWeight:600,marginTop:2}}>{uAct[c]||"—"}</div>
+              </div>)}
+              {TU==="fletyer"&&<div style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase"}}>Descripción del vehículo</div>
+                <div style={{fontSize:14,marginTop:2,color:C.text}}>{uAct.descripcionVehiculo||"—"}</div>
+              </div>}
+              <button style={st.btn(GRAD)} onClick={()=>{setEditData({...uAct});setEditMode(true);}}>✏️ Editar datos</button>
+            </>):(
+              <>
+                {campos.map(c=><div key={c}>
+                  <label style={st.label}>{c==="vehiculo"?"Tipo de Vehículo":c==="descripcionVehiculo"?"Descripción del vehículo (marca, modelo, tamaño...)":c.charAt(0).toUpperCase()+c.slice(1)}</label>
+                  {c==="descripcionVehiculo"
+                    ?<textarea style={st.textarea} value={editData[c]||""} onChange={e=>setEditData(p=>({...p,[c]:e.target.value}))} placeholder="Ej: Ford Transit 2018, caja grande, capacidad 1500kg"/>
+                    :<input style={st.input} value={editData[c]||""} onChange={e=>setEditData(p=>({...p,[c]:e.target.value}))}/>}
+                </div>)}
+                {TU==="fletyer"&&(
+                  <div style={{marginBottom:11}}>
+                    <label style={st.label}>📷 Foto del vehículo</label>
+                    {uAct.fotoVehiculo
+                      ?<div style={{position:"relative",marginBottom:4}}><img src={uAct.fotoVehiculo} alt="Vehículo" style={{width:"100%",borderRadius:10,maxHeight:140,objectFit:"cover"}}/><button onClick={()=>document.getElementById("fotoVehInput").click()} style={{position:"absolute",top:6,right:6,...st.btnSm(GRAD_B)}}>📷 Cambiar</button></div>
+                      :<button onClick={()=>document.getElementById("fotoVehInput").click()} style={{...st.btnOut(C.cyan),display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:4}}><span>📷</span>Subir foto del vehículo</button>}
+                    <input id="fotoVehInput" type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleImg("fotoVehiculo",e)}/>
+                  </div>
+                )}
+                <div style={{display:"flex",gap:10}}>
+                  <button style={{...st.btn(C.success),flex:1}} onClick={guardarEdicion}>Guardar</button>
+                  <button style={{...st.btn(C.muted),flex:1}} onClick={()=>setEditMode(false)}>Cancelar</button>
+                </div>
+              </>
+            )}
           </div>
+
+          {/* ── Foto vehículo (vista) ── */}
+          {TU==="fletyer"&&uAct.fotoVehiculo&&!editMode&&<div style={st.card}>
+            <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>🚚 Foto del vehículo</div>
+            <img src={uAct.fotoVehiculo} alt="Vehículo" style={{width:"100%",borderRadius:12,maxHeight:160,objectFit:"cover"}}/>
+            {uAct.descripcionVehiculo&&<div style={{fontSize:12,color:C.muted,marginTop:8}}>{uAct.descripcionVehiculo}</div>}
+          </div>}
+
+          {/* ── Email y contraseña ── */}
+          <CuentaAcceso perfil={uAct}/>
+
+          {/* ── Tarifas (Fletyer) ── */}
           {TU==="fletyer"&&tarifa&&<div style={st.card}><div style={{fontSize:14,fontWeight:700,marginBottom:10}}>💰 Mis tarifas</div><div style={{display:"flex",gap:10}}><div style={{flex:1,background:`${C.cyan}12`,borderRadius:12,padding:"10px",textAlign:"center"}}><div style={{fontSize:11,color:C.muted}}>Por km</div><div style={{fontSize:18,fontWeight:800,color:C.cyan}}>{formatUYU(tarifa.kmRate)}</div></div><div style={{flex:1,background:`${C.blue}12`,borderRadius:12,padding:"10px",textAlign:"center"}}><div style={{fontSize:11,color:C.muted}}>Por hora</div><div style={{fontSize:18,fontWeight:800,color:C.blue}}>{formatUYU(tarifa.hrRate)}</div></div></div><div style={{fontSize:11,color:C.muted,marginTop:8,textAlign:"center"}}>{tarifa.icon} {tarifa.label} · comisión Flety: {comisionPct}%</div></div>}
+
+          {/* ── Documentos (Fletyer) ── */}
           {TU==="fletyer"&&(()=>{
             const est=(() => {if(!uAct.libretaHasta)return{label:"Sin datos",col:C.muted};const d=Math.round((new Date(uAct.libretaHasta)-new Date())/(1000*60*60*24));return d<0?{label:"⛔ Vencida",col:C.danger}:d<60?{label:`⚠️ Vence en ${d}d`,col:C.warning}:{label:"✅ Vigente",col:C.success};})();
             return <div style={st.card}>
@@ -1193,6 +1304,8 @@ export default function App() {
               <div style={{fontSize:11,color:C.muted,marginTop:8,textAlign:"center"}}>🔒 Solo el equipo de FLETY verá estos documentos</div>
             </div>;
           })()}
+
+          {/* ── Historial ── */}
           {TU==="fletyer"&&<div style={st.card}><div style={{fontSize:14,fontWeight:700,marginBottom:12}}>📊 Mi historial</div>{finalizados.length===0?<div style={{textAlign:"center",color:C.muted,fontSize:13}}>Sin viajes finalizados.</div>:<>{finalizados.map(s=>{const c=costoViaje(s),com=Math.round(c*(comisionPct/100));return<div key={s.id} style={{borderBottom:`1px solid ${C.cyan}18`,paddingBottom:10,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:13,fontWeight:600}}>{s.tipo==="mudanza"?"🏠 Mudanza":"📦 Flete"}</div><div style={{fontSize:11,color:C.muted}}>{s.fecha}</div>{s.tiempoTotal&&<div style={{fontSize:11,color:C.muted}}>⏱ {formatTiempo(s.tiempoTotal)}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:800,color:C.success}}>{formatUYU(c-com)}</div><div style={{fontSize:11,color:C.danger}}>−{formatUYU(com)} Flety</div></div></div></div>;})}<div style={{background:GRAD_B,borderRadius:14,padding:14,marginTop:4}}><div style={{display:"flex",gap:8}}><div style={{flex:1,textAlign:"center"}}><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Bruto</div><div style={{fontSize:15,fontWeight:800,color:"#fff"}}>{formatUYU(totalB)}</div></div><div style={{flex:1,textAlign:"center"}}><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Com.Flety</div><div style={{fontSize:15,fontWeight:800,color:"#FFB800"}}>−{formatUYU(totalC)}</div></div><div style={{flex:1,textAlign:"center"}}><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Recibís</div><div style={{fontSize:15,fontWeight:800,color:"#7FFFD4"}}>{formatUYU(totalB-totalC)}</div></div></div></div></>}</div>}
           {TU==="cliente"&&finCliente.length>0&&<div style={st.card}><div style={{fontSize:14,fontWeight:700,marginBottom:12}}>📊 Mi historial</div>{finCliente.map(s=>{const c=costoViaje(s);const fl=usuarios.find(u=>u.id===s.fleteroAceptado);return<div key={s.id} style={{borderBottom:`1px solid ${C.cyan}18`,paddingBottom:10,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:13,fontWeight:600}}>{s.tipo==="mudanza"?"🏠 Mudanza":"📦 Flete"}</div><div style={{fontSize:11,color:C.muted}}>{s.fecha} · {fl?.nombre}</div></div><div style={{fontSize:14,fontWeight:800,color:C.blue}}>{formatUYU(c)}</div></div></div>;})} <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${C.cyan}22`,paddingTop:10}}><span style={{fontWeight:700}}>Total pagado</span><span style={{fontSize:15,fontWeight:800,color:C.blue}}>{formatUYU(finCliente.reduce((a,s)=>a+costoViaje(s),0))}</span></div></div>}
           {TU==="fletyer"&&uAct.calificaciones?.length>0&&<div style={st.card}><div style={{fontWeight:800,marginBottom:12}}>⭐ Mis reseñas</div>{uAct.calificaciones.map((c,i)=><div key={i} style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between"}}><Estrellas valor={c.estrellas} size={15}/><span style={{fontSize:12,color:C.muted}}>— {c.cliente}</span></div>{c.comentario&&<div style={{fontSize:13,fontStyle:"italic",marginTop:4}}>"{c.comentario}"</div>}</div>)}</div>}
