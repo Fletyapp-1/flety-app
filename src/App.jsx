@@ -330,7 +330,9 @@ function PerfilUsuario({u, onClose}) {
         </div>
         <div style={{...st.card,borderRadius:"0 0 18px 18px",paddingTop:20}}>
           {[{l:"Edad",v:u.edad?`${u.edad} años`:"—"},{l:"Dirección",v:u.direccion||"—"},{l:"Teléfono",v:u.telefono||"—"},...(ef?[{l:"Vehículo",v:u.vehiculo||"—"}]:[])].map(f=><div key={f.l} style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}><div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase"}}>{f.l}</div><div style={{fontSize:15,fontWeight:600,marginTop:2}}>{f.v}</div></div>)}
+          {ef&&u.descripcionVehiculo&&<div style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}><div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase"}}>Descripción del vehículo</div><div style={{fontSize:14,marginTop:2,color:C.text}}>{u.descripcionVehiculo}</div></div>}
         </div>
+        {ef&&u.fotoVehiculo&&<div style={st.card}><div style={{fontSize:13,fontWeight:700,marginBottom:8}}>🚚 Foto del vehículo</div><img src={u.fotoVehiculo} alt="Vehículo" style={{width:"100%",borderRadius:12,maxHeight:180,objectFit:"cover"}}/></div>}
         {ef && u.calificaciones?.length > 0 && <div style={st.card}><div style={{fontWeight:800,marginBottom:12}}>⭐ Reseñas</div>{u.calificaciones.map((c,i)=><div key={i} style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between"}}><Estrellas valor={c.estrellas} size={15}/><span style={{fontSize:12,color:C.muted}}>— {c.cliente}</span></div>{c.comentario&&<div style={{fontSize:13,fontStyle:"italic",marginTop:4}}>"{c.comentario}"</div>}</div>)}</div>}
       </div>
     </div>
@@ -738,13 +740,12 @@ export default function App() {
       }, 0);
     }
     if (perfil.tipo==="fletyer") {
-      return solicitudes.filter(s=>s.fleteroAceptado===perfil.id).reduce((total, sol)=>{
-        const msgs = sol.chats?.[perfil.id]||[];
-        const leido = leidos[sol.id]?.[perfil.id] || 0;
-        const noLeidos = msgs.filter((m,i)=>i>=leido && m.de==="cliente").length;
-        // También contar si fue aceptado recientemente
-        return total + (noLeidos > 0 ? 1 : 0);
-      }, 0);
+      // Badge = trabajos en_curso que el fletyer no ha visto aún en "Mis Trabajos"
+      return solicitudes.filter(s=>
+        s.fleteroAceptado===perfil.id &&
+        s.estado==="en_curso" &&
+        !leidos[s.id]?._trabajoVisto
+      ).length;
     }
     return 0;
   })();
@@ -1165,33 +1166,58 @@ export default function App() {
 
   // ─── MIS TRABAJOS FLETYER ─────────────────────────────────────────────
   if (tab==="solicitudes" && TU==="fletyer") {
-    const misTrab = solicitudes.filter(s=>(s.estado==="en_curso"||s.estado==="finalizado")&&s.fleteroAceptado===UA.id);
+    const enCurso = solicitudes.filter(s=>s.estado==="en_curso"&&s.fleteroAceptado===UA.id);
+    const finalizados = solicitudes.filter(s=>s.estado==="finalizado"&&s.fleteroAceptado===UA.id);
+    // Marcar todos los en_curso como vistos
+    enCurso.forEach(s=>{ if(!leidos[s.id]?._trabajoVisto) setLeidos(p=>({...p,[s.id]:{...(p[s.id]||{}),_trabajoVisto:true}})); });
     return (
       <div style={st.wrap}><ToastContainer/>
         <div style={st.header}><div style={{display:"flex",alignItems:"center",gap:8}}><LogoMark/><span style={{fontSize:20,fontWeight:900,color:"#fff",letterSpacing:2}}>FLETY</span></div><button onClick={salir} style={{background:"none",border:"none",color:"#fff",fontSize:12,cursor:"pointer"}}>Salir</button></div>
         <div style={st.cont}>
-          <div style={{fontSize:16,fontWeight:800,marginBottom:10}}>Mis trabajos</div>
-          {misTrab.length===0&&<div style={{...st.card,textAlign:"center",color:C.muted}}>Aún no tenés trabajos asignados.</div>}
-          {misTrab.map(sol=>{const e=eLabel(sol.estado);const cl=usuarios.find(u=>u.id===sol.clienteId);return(
-            <div key={sol.id} style={{...st.card,borderLeft:`4px solid ${e.col}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={st.tag(sol.tipo==="flete"?C.blue:C.cyan)}>{sol.tipo==="flete"?"📦 Flete":"🏠 Mudanza"}</span><span style={st.tag(e.col)}>{e.label}</span></div>
+
+          {/* ── EN CURSO ── */}
+          <div style={{fontSize:15,fontWeight:800,marginBottom:10,color:C.warning}}>🔄 En curso ({enCurso.length})</div>
+          {enCurso.length===0&&<div style={{...st.card,textAlign:"center",color:C.muted,fontSize:13,marginBottom:14}}>No tenés trabajos activos.</div>}
+          {enCurso.map(sol=>{const cl=usuarios.find(u=>u.id===sol.clienteId);return(
+            <div key={sol.id} style={{...st.card,borderLeft:`4px solid ${C.warning}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                <span style={st.tag(sol.tipo==="flete"?C.blue:C.cyan)}>{sol.tipo==="flete"?"📦 Flete":"🏠 Mudanza"}</span>
+                <span style={st.tag(C.warning)}>🔄 En curso</span>
+              </div>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><Avatar u={cl} size={28}/><span style={{fontSize:14,fontWeight:700,color:C.blue}}>{sol.clienteNombre}</span></div>
               <MiniMapa origen={sol.origen} destino={sol.destino}/>
               <div style={{fontSize:13}}>📍 {sol.origen}</div><div style={{fontSize:13}}>🏁 {sol.destino}</div>
+              {sol.fechaSolicitada&&<div style={{fontSize:12,color:C.blue,marginTop:4,fontWeight:600}}>📅 {new Date(sol.fechaSolicitada+"T12:00:00").toLocaleDateString("es-UY",{weekday:"long",day:"numeric",month:"long"})}</div>}
               {sol.precioFletyer&&<div style={{background:sol.tipo==="mudanza"?`${C.blue}12`:`${C.cyan}12`,borderRadius:10,padding:"8px 12px",marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:12,color:C.muted,fontWeight:700}}>{sol.tipo==="mudanza"?"💰 Tu precio/h":"💰 Precio acordado"}</span><span style={{fontSize:17,fontWeight:900,color:sol.tipo==="mudanza"?C.blue:C.cyan}}>{formatUYU(sol.precioFletyer)}{sol.tipo==="mudanza"?"/h":""}</span></div>}
-              {sol.estado==="finalizado"&&<ResumenViaje sol={sol} comisionPct={comisionPct}/>}
-              {sol.estado==="en_curso"&&!sol.viajeInicio&&(
+              {!sol.viajeInicio&&(
                 <div style={{background:`${C.warning}15`,border:`1.5px solid ${C.warning}55`,borderRadius:14,padding:"14px",marginTop:10}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.warning,marginBottom:8}}>🚦 Listo para arrancar</div>
-                  <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Presioná cuando estés en el punto de partida.</div>
                   <button style={st.btn(`linear-gradient(135deg,${C.success},#00a87a)`)} onClick={()=>iniciarViaje(sol.id)}>🚀 Iniciar viaje</button>
                   <button style={{...st.btnOut(C.warning),color:C.warning,marginBottom:0}} onClick={()=>cancelarViaje(sol.id)}>↩️ Cancelar trabajo</button>
                 </div>
               )}
-              {sol.estado==="en_curso"&&sol.viajeInicio&&!sol.viajeFin&&<ContadorViaje sol={sol} tipoUsuario="fletyer" onIniciar={()=>iniciarViaje(sol.id)} onFinalizar={s=>finalizarViaje(sol.id,s)}/>}
+              {sol.viajeInicio&&!sol.viajeFin&&<ContadorViaje sol={sol} tipoUsuario="fletyer" onIniciar={()=>iniciarViaje(sol.id)} onFinalizar={s=>finalizarViaje(sol.id,s)}/>}
               <button style={{...st.btn(GRAD,8),marginTop:8}} onClick={()=>abrirChat(sol.id,String(UA.id))}>💬 Chat</button>
             </div>
           );})}
+
+          {/* ── FINALIZADOS ── */}
+          {finalizados.length>0&&<>
+            <div style={{fontSize:15,fontWeight:800,marginBottom:10,marginTop:6,color:C.success}}>✅ Finalizados ({finalizados.length})</div>
+            {finalizados.map(sol=>{const cl=usuarios.find(u=>u.id===sol.clienteId);return(
+              <div key={sol.id} style={{...st.card,borderLeft:`4px solid ${C.success}`,opacity:0.9}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                  <span style={st.tag(sol.tipo==="flete"?C.blue:C.cyan)}>{sol.tipo==="flete"?"📦 Flete":"🏠 Mudanza"}</span>
+                  <span style={st.tag(C.success)}>✅ Finalizado</span>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><Avatar u={cl} size={28}/><span style={{fontSize:14,fontWeight:700,color:C.blue}}>{sol.clienteNombre}</span><span style={{fontSize:11,color:C.muted,marginLeft:"auto"}}>📅 {sol.fecha}</span></div>
+                <div style={{fontSize:13}}>📍 {sol.origen}</div><div style={{fontSize:13}}>🏁 {sol.destino}</div>
+                <ResumenViaje sol={sol} comisionPct={comisionPct}/>
+                <button style={{...st.btn(GRAD,8),marginTop:4}} onClick={()=>abrirChat(sol.id,String(UA.id))}>💬 Chat</button>
+              </div>
+            );})}
+          </>}
+
         </div>
         <TabBar/>
       </div>
