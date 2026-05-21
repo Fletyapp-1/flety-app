@@ -1010,15 +1010,18 @@ export default function App() {
               {sol.estado==="en_curso"&&!sol.viajeInicio&&<button style={{...st.btnOut(C.warning),color:C.warning,marginTop:8}} onClick={()=>cancelarViaje(sol.id)}>↩️ Cancelar viaje</button>}
               {sol.estado==="finalizado"&&!sol.calificado&&<button style={{...st.btn(C.warning),marginTop:8}} onClick={()=>setModalCal({solId:sol.id,fid:sol.fleteroAceptado})}>⭐ Calificar al Fletyer</button>}
               {chatsKeys.map(fid=>{const fl=usuarios.find(u=>u.id===fid);const acept=sol.fleteroAceptado===fid;const of=sol.ofertasFletyer?.[fid];const p=promEst(fl?.calificaciones);return(
-                <div key={fid} style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px",background:"#F0FAFA",borderRadius:12}}>
-                  <button onClick={()=>setVerPerfil(fid)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Avatar u={fl} size={36}/></button>
+                <div key={fid} onClick={()=>abrirChat(sol.id,fid)}
+                  style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px",background:acept?"#E8F8F0":"#F0FAFA",borderRadius:12,cursor:"pointer",border:`1.5px solid ${acept?C.success+"44":"transparent"}`,transition:"background 0.15s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=acept?"#D4F0E4":"#E4EEF8"}
+                  onMouseLeave={e=>e.currentTarget.style.background=acept?"#E8F8F0":"#F0FAFA"}>
+                  <button onClick={e=>{e.stopPropagation();setVerPerfil(fid);}} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Avatar u={fl} size={36}/></button>
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:700,color:C.blue}}>{fl?.nombre}</div>
                     <div style={{display:"flex",alignItems:"center",gap:4}}><Estrellas valor={Math.round(parseFloat(p))} size={13}/>{p>0&&<span style={{fontSize:11,color:C.muted}}>{p}</span>}</div>
                     {of&&<div style={{fontSize:13,fontWeight:800,color:sol.tipo==="mudanza"?C.blue:C.cyan}}>{formatUYU(of.precio)}{sol.tipo==="mudanza"?"/h":""}</div>}
                   </div>
                   {acept&&<span style={st.tag(C.success)}>✅</span>}
-                  <button style={{...st.btn(acept?C.success:GRAD,0),width:"auto",padding:"6px 14px",fontSize:12}} onClick={()=>abrirChat(sol.id,fid)}>Chat</button>
+                  <span style={{fontSize:12,fontWeight:700,color:acept?C.success:C.blue,background:acept?`${C.success}18`:`${C.blue}12`,borderRadius:10,padding:"5px 12px"}}>💬 Chat</span>
                 </div>
               );})}
             </div>
