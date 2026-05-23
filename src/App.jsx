@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { auth, db } from "./firebase.js";
+import { TERMINOS } from "./terminos.js";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { collection, doc, setDoc, getDoc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp } from "firebase/firestore";
 
@@ -355,6 +356,41 @@ function ModalCalificar({fletyer, onCalificar, onCerrar}) {
   );
 }
 
+// ─── MODAL TÉRMINOS Y CONDICIONES ────────────────────────────────────────
+function ModalTerminos({onCerrar}) {
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:400,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div style={{background:"#fff",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 -4px 24px rgba(0,0,0,0.2)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 20px 12px",borderBottom:"1px solid #eee",flexShrink:0}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:800,color:"#1A2340"}}>Términos y Condiciones</div>
+            <div style={{fontSize:11,color:"#7A90A4",marginTop:2}}>FLETY · República Oriental del Uruguay</div>
+          </div>
+          <button onClick={onCerrar} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#7A90A4",lineHeight:1}}>×</button>
+        </div>
+        <div style={{overflowY:"auto",padding:"16px 20px",flex:1}}>
+          {TERMINOS.split("\n\n").map((parr,i)=>(
+            <p key={i} style={{fontSize:13,lineHeight:1.7,color:parr.match(/^\d+\.|^─/)?undefined:"#3A4A5A",fontWeight:parr.match(/^\d+\.|^POLÍTICA|^TÉRMINOS/)?700:400,color:parr.match(/^\d+\.|^POLÍTICA|^TÉRMINOS/)?"#1A2340":"#3A4A5A",marginBottom:12,borderTop:parr.startsWith("─")?`1px solid #eee`:undefined,paddingTop:parr.startsWith("─")?12:undefined}}>
+              {parr}
+            </p>
+          ))}
+        </div>
+        <div style={{padding:"12px 20px 20px",borderTop:"1px solid #eee",flexShrink:0}}>
+          <button onClick={onCerrar} style={{background:`linear-gradient(135deg,#00D4D4,#3B4FE0)`,color:"#fff",border:"none",borderRadius:12,padding:"12px 0",width:"100%",fontSize:14,fontWeight:700,cursor:"pointer"}}>Entendido</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LinkTerminos({onAbrir}) {
+  return (
+    <span onClick={onAbrir} style={{color:"#3B4FE0",textDecoration:"underline",cursor:"pointer",fontWeight:700}}>
+      Términos y Condiciones
+    </span>
+  );
+}
+
 // ─── CUENTA ACCESO: email + cambio de contraseña ─────────────────────────
 function CuentaAcceso({perfil}) {
   const [editando, setEditando] = useState(null); // null | "pass"
@@ -441,6 +477,8 @@ export default function App() {
   const [editData, setEditData] = useState({});
   const [verPerfil, setVerPerfil] = useState(null);
   const [modalCal, setModalCal] = useState(null);
+  const [showTerminos, setShowTerminos] = useState(false);
+  const [aceptoTerminos, setAceptoTerminos] = useState(false);
   const [precioEdit, setPrecioEdit] = useState({});
   const [horasMin, setHorasMin] = useState({});
   const [notifs, setNotifs] = useState([]); // toasts [{id, texto, tipo, icono}]
@@ -792,6 +830,9 @@ export default function App() {
     document.head.appendChild(s);
   }
 
+  // Modal términos global
+  if (showTerminos) return <ModalTerminos onCerrar={()=>setShowTerminos(false)}/>;
+
   if (verPerfil) return <><ToastContainer/><PerfilUsuario u={usuarios.find(u=>u.id===verPerfil)||verPerfil} onClose={()=>setVerPerfil(null)}/></>;
 
   if (modalCal) {
@@ -843,8 +884,18 @@ export default function App() {
             <label style={st.label}>Contraseña {!esLogin&&"(mín. 6 caracteres)"}</label>
             <input style={st.input} type="password" placeholder="••••••" value={esLogin?loginForm.pass:regForm.pass} onChange={e=>esLogin?setLoginForm(p=>({...p,pass:e.target.value})):setRegForm(p=>({...p,pass:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&esLogin&&login()}/>
             {loginErr && <div style={{color:C.danger,fontSize:13,marginBottom:10}}>⚠️ {loginErr}</div>}
-            <button style={st.btn(tipo==="fletyer"?GRAD_B:GRAD)} onClick={esLogin?login:registrar}>{esLogin?"Ingresar":"Registrarme"}</button>
-            {tipo!=="admin"&&<button style={st.btnOut(C.cyan)} onClick={()=>{setLoginErr("");setModo(esLogin?`${tipo}-registro`:`${tipo}-login`);}}>{esLogin?"Crear cuenta nueva":"Ya tengo cuenta"}</button>}
+            {!esLogin&&(
+              <div style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:14,padding:"10px 12px",background:`${C.blue}08`,borderRadius:12,border:`1.5px solid ${aceptoTerminos?C.blue+"44":"#ddd"}`}}>
+                <input type="checkbox" id="termchk" checked={aceptoTerminos} onChange={e=>setAceptoTerminos(e.target.checked)} style={{width:18,height:18,marginTop:1,cursor:"pointer",flexShrink:0,accentColor:C.blue}}/>
+                <label htmlFor="termchk" style={{fontSize:13,color:C.text,cursor:"pointer",lineHeight:1.5}}>
+                  He leído y acepto los{" "}
+                  <LinkTerminos onAbrir={()=>setShowTerminos(true)}/>
+                  {" "}de FLETY
+                </label>
+              </div>
+            )}
+            <button style={{...st.btn(tipo==="fletyer"?GRAD_B:GRAD),...(!esLogin&&!aceptoTerminos?{opacity:0.5,cursor:"not-allowed"}:{})}} onClick={esLogin?login:registrar} disabled={!esLogin&&!aceptoTerminos}>{esLogin?"Ingresar":"Registrarme"}</button>
+            {tipo!=="admin"&&<button style={st.btnOut(C.cyan)} onClick={()=>{setLoginErr("");setAceptoTerminos(false);setModo(esLogin?`${tipo}-registro`:`${tipo}-login`);}}>{esLogin?"Crear cuenta nueva":"Ya tengo cuenta"}</button>}
           </div>
         </div>
       </div>
@@ -1338,6 +1389,13 @@ export default function App() {
           {TU==="fletyer"&&<div style={st.card}><div style={{fontSize:14,fontWeight:700,marginBottom:12}}>📊 Mi historial</div>{finalizados.length===0?<div style={{textAlign:"center",color:C.muted,fontSize:13}}>Sin viajes finalizados.</div>:<>{finalizados.map(s=>{const c=costoViaje(s),com=Math.round(c*(comisionPct/100));return<div key={s.id} style={{borderBottom:`1px solid ${C.cyan}18`,paddingBottom:10,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:13,fontWeight:600}}>{s.tipo==="mudanza"?"🏠 Mudanza":"📦 Flete"}</div><div style={{fontSize:11,color:C.muted}}>{s.fecha}</div>{s.tiempoTotal&&<div style={{fontSize:11,color:C.muted}}>⏱ {formatTiempo(s.tiempoTotal)}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:800,color:C.success}}>{formatUYU(c-com)}</div><div style={{fontSize:11,color:C.danger}}>−{formatUYU(com)} Flety</div></div></div></div>;})}<div style={{background:GRAD_B,borderRadius:14,padding:14,marginTop:4}}><div style={{display:"flex",gap:8}}><div style={{flex:1,textAlign:"center"}}><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Bruto</div><div style={{fontSize:15,fontWeight:800,color:"#fff"}}>{formatUYU(totalB)}</div></div><div style={{flex:1,textAlign:"center"}}><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Com.Flety</div><div style={{fontSize:15,fontWeight:800,color:"#FFB800"}}>−{formatUYU(totalC)}</div></div><div style={{flex:1,textAlign:"center"}}><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Recibís</div><div style={{fontSize:15,fontWeight:800,color:"#7FFFD4"}}>{formatUYU(totalB-totalC)}</div></div></div></div></>}</div>}
           {TU==="cliente"&&finCliente.length>0&&<div style={st.card}><div style={{fontSize:14,fontWeight:700,marginBottom:12}}>📊 Mi historial</div>{finCliente.map(s=>{const c=costoViaje(s);const fl=usuarios.find(u=>u.id===s.fleteroAceptado);return<div key={s.id} style={{borderBottom:`1px solid ${C.cyan}18`,paddingBottom:10,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:13,fontWeight:600}}>{s.tipo==="mudanza"?"🏠 Mudanza":"📦 Flete"}</div><div style={{fontSize:11,color:C.muted}}>{s.fecha} · {fl?.nombre}</div></div><div style={{fontSize:14,fontWeight:800,color:C.blue}}>{formatUYU(c)}</div></div></div>;})} <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${C.cyan}22`,paddingTop:10}}><span style={{fontWeight:700}}>Total pagado</span><span style={{fontSize:15,fontWeight:800,color:C.blue}}>{formatUYU(finCliente.reduce((a,s)=>a+costoViaje(s),0))}</span></div></div>}
           {TU==="fletyer"&&uAct.calificaciones?.length>0&&<div style={st.card}><div style={{fontWeight:800,marginBottom:12}}>⭐ Mis reseñas</div>{uAct.calificaciones.map((c,i)=><div key={i} style={{borderBottom:`1px solid ${C.cyan}22`,paddingBottom:10,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between"}}><Estrellas valor={c.estrellas} size={15}/><span style={{fontSize:12,color:C.muted}}>— {c.cliente}</span></div>{c.comentario&&<div style={{fontSize:13,fontStyle:"italic",marginTop:4}}>"{c.comentario}"</div>}</div>)}</div>}
+
+          {/* ── Link Términos y Condiciones ── */}
+          <div style={{textAlign:"center",padding:"4px 0 16px"}}>
+            <span style={{fontSize:13,color:C.muted}}>Al usar FLETY aceptás nuestros{" "}</span>
+            <LinkTerminos onAbrir={()=>setShowTerminos(true)}/>
+          </div>
+
         </div>
         <TabBar/>
       </div>
