@@ -497,10 +497,20 @@ export default function App() {
   const setPI = (id,v) => setPrecioEdit(p=>({...p,[id]:v}));
 
   // ── Toast notifications ──
-  const toast = (texto, icono="🔔", tipo="info") => {
+  const toast = (texto, icono="🔔", tipo="info", navSolId=null, navFid=null) => {
     const id = Date.now() + Math.random();
-    setNotifs(p=>[...p,{id,texto,icono,tipo}]);
-    setTimeout(()=>setNotifs(p=>p.filter(n=>n.id!==id)), 5000);
+    setNotifs(p=>[...p,{id,texto,icono,tipo,navSolId,navFid}]);
+    setTimeout(()=>setNotifs(p=>p.filter(n=>n.id!==id)), 6000);
+  };
+
+  const navegarDesdeToast = (n) => {
+    setNotifs(p=>p.filter(x=>x.id!==n.id));
+    if (n.navSolId && n.navFid) {
+      abrirChat(n.navSolId, n.navFid);
+    } else if (n.navSolId) {
+      setTab("solicitudes");
+      setChatActivo(null);
+    }
   };
 
   // ── Detectar cambios en solicitudes y notificar ──
@@ -519,36 +529,32 @@ export default function App() {
         ofertasNuevas.forEach(fid=>{
           const fl = usuarios.find(u=>u.id===fid);
           const oferta = sol.ofertasFletyer[fid];
-          toast(`${fl?.nombre||"Un Fletyer"} ofertó ${formatUYU(oferta.precio)}${sol.tipo==="mudanza"?"/h":" total"}`, "💰", "oferta");
+          toast(`${fl?.nombre||"Fletyer"} ofertó ${formatUYU(oferta.precio)}${sol.tipo==="mudanza"?"/h":" total"} · Tocá para ver`, "💰", "oferta", sol.id, fid);
         });
-        // Nuevo mensaje de fletyer en chat
         Object.keys(sol.chats||{}).forEach(fid=>{
           const msgsNuevos = (sol.chats[fid]||[]).length - ((ant.chats?.[fid]||[]).length);
           if (msgsNuevos > 0 && sol.chats[fid].slice(-1)[0]?.de==="fletyer") {
             const fl = usuarios.find(u=>u.id===fid);
-            toast(`Mensaje de ${fl?.nombre||"Fletyer"}: "${sol.chats[fid].slice(-1)[0].texto.slice(0,40)}..."`, "💬", "mensaje");
+            toast(`Mensaje de ${fl?.nombre||"Fletyer"}: "${sol.chats[fid].slice(-1)[0].texto.slice(0,35)}..." · Tocá aquí`, "💬", "mensaje", sol.id, fid);
           }
         });
-        // Fletyer inició el viaje
-        if (!ant.viajeInicio && sol.viajeInicio) toast("¡El Fletyer inició el viaje! El contador está corriendo. 🚀", "🚀", "viaje");
-        // Viaje finalizado
-        if (ant.estado!=="finalizado" && sol.estado==="finalizado") toast("Viaje finalizado. ¡Podés calificar al Fletyer! ⭐", "✅", "fin");
+        if (!ant.viajeInicio && sol.viajeInicio) toast("¡El Fletyer inició el viaje! Tocá para ver el contador 🚀", "🚀", "viaje", sol.id, sol.fleteroAceptado);
+        if (ant.estado!=="finalizado" && sol.estado==="finalizado") toast("Viaje finalizado. ¡Tocá para calificar al Fletyer! ⭐", "✅", "fin", sol.id, sol.fleteroAceptado);
       }
 
       // ── FLETYER: aceptación de oferta ──
-      if (perfil.tipo==="fletyer" && sol.fleteroAceptado===perfil.id) {
-        if (!ant.fleteroAceptado) toast(`¡${sol.clienteNombre} aceptó tu oferta! El trabajo es tuyo. 🎉`, "🎉", "aceptado");
-        // Nuevo mensaje del cliente
-        const misChats = sol.chats?.[perfil.id]||[];
-        const antChats = ant.chats?.[perfil.id]||[];
+      if (perfil.tipo==="fletyer" && sol.fleteroAceptado===String(perfil.id)) {
+        if (!ant.fleteroAceptado) toast(`¡${sol.clienteNombre} aceptó tu oferta! Tocá para ver 🎉`, "🎉", "aceptado", sol.id, String(perfil.id));
+        const misChats = sol.chats?.[String(perfil.id)]||[];
+        const antChats = ant.chats?.[String(perfil.id)]||[];
         if (misChats.length > antChats.length && misChats.slice(-1)[0]?.de==="cliente") {
-          toast(`Mensaje de ${sol.clienteNombre}: "${misChats.slice(-1)[0].texto.slice(0,40)}..."`, "💬", "mensaje");
+          toast(`Mensaje de ${sol.clienteNombre}: "${misChats.slice(-1)[0].texto.slice(0,35)}..." · Tocá aquí`, "💬", "mensaje", sol.id, String(perfil.id));
         }
       }
 
       // ── FLETYER: nueva solicitud disponible ──
       if (perfil.tipo==="fletyer" && !ant && sol.estado==="activa") {
-        toast("Nueva solicitud disponible", "📋", "nueva");
+        toast("Nueva solicitud disponible · Tocá para ver", "📋", "nueva", sol.id, null);
       }
     });
 
@@ -809,13 +815,20 @@ export default function App() {
   const colToast = {oferta:C.cyan, mensaje:C.blue, viaje:C.success, fin:C.success, aceptado:"#9B59B6", nueva:C.warning, info:C.muted};
   const ToastContainer = () => (
     <div style={{position:"fixed",top:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,zIndex:500,pointerEvents:"none",padding:"8px 12px",display:"flex",flexDirection:"column",gap:8}}>
-      {notifs.map(n=>(
-        <div key={n.id} style={{background:"#1A2340",color:"#fff",borderRadius:14,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 4px 20px rgba(0,0,0,0.35)",borderLeft:`4px solid ${colToast[n.tipo]||C.cyan}`,pointerEvents:"all",animation:"slideDown 0.3s ease"}}>
-          <span style={{fontSize:22,flexShrink:0}}>{n.icono}</span>
-          <span style={{fontSize:13,lineHeight:1.4,flex:1}}>{n.texto}</span>
-          <button onClick={()=>setNotifs(p=>p.filter(x=>x.id!==n.id))} style={{background:"none",border:"none",color:"rgba(255,255,255,0.5)",fontSize:18,cursor:"pointer",flexShrink:0,lineHeight:1}}>×</button>
-        </div>
-      ))}
+      {notifs.map(n=>{
+        const tieneNav = !!(n.navSolId);
+        return (
+          <div key={n.id} style={{background:"#1A2340",color:"#fff",borderRadius:14,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 4px 20px rgba(0,0,0,0.35)",borderLeft:`4px solid ${colToast[n.tipo]||C.cyan}`,pointerEvents:"all",animation:"slideDown 0.3s ease",cursor:tieneNav?"pointer":"default"}}
+            onClick={tieneNav ? ()=>navegarDesdeToast(n) : undefined}>
+            <span style={{fontSize:22,flexShrink:0}}>{n.icono}</span>
+            <div style={{flex:1}}>
+              <span style={{fontSize:13,lineHeight:1.4}}>{n.texto}</span>
+              {tieneNav&&<div style={{fontSize:11,color:`${colToast[n.tipo]||C.cyan}`,marginTop:3,fontWeight:700}}>Tocá para ir →</div>}
+            </div>
+            <button onClick={e=>{e.stopPropagation();setNotifs(p=>p.filter(x=>x.id!==n.id));}} style={{background:"none",border:"none",color:"rgba(255,255,255,0.5)",fontSize:18,cursor:"pointer",flexShrink:0,lineHeight:1}}>×</button>
+          </div>
+        );
+      })}
     </div>
   );
 
